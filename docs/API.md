@@ -31,7 +31,7 @@ loss a percentage 0–100.
 | GET | `/api/monitor/roams` | Recorded roam events |
 | GET | `/api/monitor/sessions` | List sessions |
 | DELETE | `/api/monitor/sessions/{id}` | Delete a session and its samples |
-| DELETE | `/api/monitor/samples` | Purge samples older than `older_than_days` |
+| DELETE | `/api/monitor/samples` | Prune telemetry now; defaults to the configured retention period |
 | WS | `/api/monitor/ws` | Live stream |
 
 The socket sends `hello` (status + backfill) on connect, then `sample` and
@@ -54,7 +54,9 @@ counts.
 | GET | `/api/heatmap/plans` | List plans |
 | GET/PATCH/DELETE | `/api/heatmap/plans/{id}` | Read, rename, delete |
 | GET | `/api/heatmap/plans/{id}/image` | The plan image |
+| GET | `/api/heatmap/measure` | One live reading, saved nowhere |
 | POST | `/api/heatmap/plans/{id}/points` | Capture a survey point |
+| POST | `/api/heatmap/plans/{id}/walk` | Turn a walked line into a row of points |
 | GET | `/api/heatmap/plans/{id}/points` | List points |
 | DELETE | `/api/heatmap/points/{id}` | Remove a point |
 | POST/GET | `/api/heatmap/plans/{id}/aps` | Place / list AP markers |
@@ -62,13 +64,33 @@ counts.
 | GET | `/api/heatmap/plans/{id}/grid` | Interpolated coverage grid |
 
 `POST …/points` with `measure: true` (the default) takes a live reading at that
-coordinate. Supplying the radio fields explicitly is for importing a survey
-taken elsewhere.
+coordinate, and with `scan: true` also records every other audible AP into
+`neighbors` — which is what the redundancy map is built from. Supplying the
+radio fields (and `neighbors`) explicitly is for importing a survey taken
+elsewhere.
 
-`GET …/grid` accepts `grid_size` (8–160), `power` (IDW exponent) and
-`max_influence_px`. It returns a row-major `matrix` of RSSI values with `null`
-for cells no measurement can vouch for, a matching `grades` matrix, the points,
-the AP markers and a coverage summary.
+`POST …/walk` takes `start_x/start_y`, `end_x/end_y` and a list of `samples`,
+each with `elapsed_ms` and its measurement. Each sample is positioned along the
+line by its elapsed time as a fraction of the whole walk, which assumes a steady
+pace — see the note in ARCHITECTURE.md. `GET /api/heatmap/measure` is the cheap
+per-reading call a walk loops on: no scan, and the survey ping count.
+
+`GET …/grid` accepts:
+
+| Parameter | Meaning |
+|---|---|
+| `metric` | `rssi` (default) or `redundancy` |
+| `ssid`, `bssid`, `band` | Filter the points the surface is built from |
+| `redundancy_min_rssi` | How strong a neighbour must be to count (default -70) |
+| `grid_size` | 8–160 cells across |
+| `power` | IDW exponent |
+| `max_influence_px` | Beyond this, cells stay unknown |
+
+It returns a row-major `matrix` with `null` for cells no measurement can vouch
+for, a `grades` matrix (coverage only), the points, the AP markers, a summary,
+`available_filters` for populating dropdowns, and `scanned_points`. For
+`metric=redundancy` only points that recorded a scan contribute, and the summary
+carries `blind_spots` — locations with no usable alternative AP.
 
 ## Network Test
 
@@ -95,7 +117,12 @@ Findings carry `code`, `severity` (`info`/`warning`/`critical`), `title`,
 
 Codes: `NOT_ASSOCIATED`, `WEAK_COVERAGE`, `UPSTREAM_DEGRADED`,
 `RETRANSMISSION`, `HIGH_JITTER`, `CO_CHANNEL_CONTENTION`,
-`NON_STANDARD_24_CHANNEL`, `EXCESSIVE_ROAMING`, `HEALTHY`.
+`NON_STANDARD_24_CHANNEL`, `EXCESSIVE_ROAMING`, `STICKY_CLIENT`, `SLOW_ROAM`,
+`HEALTHY`.
+
+`GET /api/diagnosis` reads the recent roam events, not just their count:
+`STICKY_CLIENT` needs to know how *late* each hand-off was, which only
+`from_rssi` can tell it.
 
 ## History
 

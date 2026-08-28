@@ -110,6 +110,49 @@ def upload_plan(base: str, png: bytes, name: str, location: str) -> dict:
 SHADOW = {"x": 620, "y": 300, "radius": 165, "max_loss_db": 22.0}
 
 
+def _rssi_from(ap: tuple, x: float, y: float) -> float:
+    """Path-loss RSSI from one AP, shaped like the simulator's model."""
+    _name, _bssid, ax, ay = ap
+    # ~14 px per metre on this plan.
+    distance_m = max(1.0, math.hypot(ax - x, ay - y) / 14.0)
+    rssi = -28 - (40 + 10 * 2.9 * math.log10(distance_m)) + 40
+
+    # Attenuation tapers to zero at the edge of the racking, so the heatmap
+    # shows a gradient rather than a hard-edged disc.
+    offset = math.hypot(SHADOW["x"] - x, SHADOW["y"] - y)
+    if offset < SHADOW["radius"]:
+        rssi -= SHADOW["max_loss_db"] * (1 - offset / SHADOW["radius"]) ** 1.5
+    return rssi
+
+
+def synth_neighbors(x: float, y: float, connected_bssid: str, rng: random.Random) -> list[dict]:
+    """Every *other* AP audible from this spot.
+
+    Without this the seeded survey cannot demonstrate the redundancy map, and
+    every point would read as a blind spot.
+    """
+    neighbors = []
+    for ap in APS:
+        if ap[1] == connected_bssid:
+            continue
+        rssi = int(round(_rssi_from(ap, x, y) + rng.uniform(-2.5, 2.5)))
+        if rssi >= -92:
+            neighbors.append(
+                {
+                    "bssid": ap[1],
+                    "ssid": "Factory-WiFi",
+                    "rssi": rssi,
+                    "channel": 44,
+                    "band": "5 GHz",
+                }
+            )
+    return neighbors
+
+
+def strongest_ap(x: float, y: float) -> tuple:
+    return max(APS, key=lambda ap: _rssi_from(ap, x, y))
+
+
 def synth_rssi(x: float, y: float, rng: random.Random) -> int:
     """RSSI from the nearest AP, using the same path-loss shape as the simulator."""
     best = -99.0
@@ -160,6 +203,7 @@ def main() -> int:
             jitter_x = x + rng.randint(-12, 12)
             jitter_y = y + rng.randint(-12, 12)
             channel = rng.choice([36, 44, 149, 6])
+            connected = strongest_ap(jitter_x, jitter_y)
             post(
                 f"{base}/api/heatmap/plans/{plan['id']}/points",
                 {
@@ -168,12 +212,13 @@ def main() -> int:
                     "measure": False,
                     "label": None,
                     "ssid": "Factory-WiFi",
-                    "bssid": rng.choice(APS)[1],
+                    "bssid": connected[1],
                     "channel": channel,
                     "band": band_for(channel),
                     "rssi": synth_rssi(jitter_x, jitter_y, rng),
                     "ping_ms": round(rng.uniform(1.5, 12.0), 2),
                     "packet_loss_pct": 0.0,
+                    "neighbors": synth_neighbors(jitter_x, jitter_y, connected[1], rng),
                 },
             )
             points += 1

@@ -60,6 +60,7 @@ def diagnose(
     scan: list[dict] | None = None,
     roam_count: int | None = None,
     window_minutes: int | None = None,
+    roams: list[dict] | None = None,
 ) -> dict:
     """Return findings ordered worst-first, plus a one-line headline."""
     th = settings.thresholds
@@ -202,6 +203,8 @@ def diagnose(
 
     findings.extend(_rf_environment_findings(scan or [], channel, band, rssi))
 
+    findings.extend(_roaming_findings(settings, roams or []))
+
     if roam_count is not None and window_minutes and roam_count >= 4:
         findings.append(
             Finding(
@@ -233,6 +236,106 @@ def diagnose(
         )
 
     return _wrap(findings, rssi, ping_ms, loss_pct)
+
+
+def _roaming_findings(settings: AppSettings, roams: list[dict]) -> list[Finding]:
+    """The two failure modes of roaming that are not "roams too often".
+
+    A sticky client is the classic warehouse fault: a barcode scanner on a
+    forklift holds its original AP well past the point of usefulness, then drops
+    the session mid-scan. It shows up in a survey as a *late* hand-off - the
+    signal on the AP being left was already at critical level - and it is
+    invisible to any check that only looks at the current RSSI, because by the
+    time you look the client has already moved on.
+
+    A slow hand-off is the other half: the roam happened, but the gap was long
+    enough for the session on top of it to time out.
+    """
+    th = settings.thresholds
+    findings: list[Finding] = []
+
+    # Only true roams count. A reconnect already had an outage, and a network
+    # change is the user switching SSID - neither is a sticky client.
+    true_roams = [r for r in roams if r.get("kind", "roam") == "roam"]
+
+    late = [
+        r
+        for r in true_roams
+        if r.get("from_rssi") is not None and r["from_rssi"] <= th.rssi_critical
+    ]
+    if late:
+        worst = min(late, key=lambda r: r["from_rssi"])
+        findings.append(
+            Finding(
+                code="STICKY_CLIENT",
+                severity=WARNING,
+                title="Client roams too late (sticky client)",
+                summary=(
+                    f"{len(late)} of {len(true_roams)} hand-offs happened only after the "
+                    f"signal had fallen to {worst['from_rssi']} dBm, at or below the "
+                    f"critical threshold ({th.rssi_critical} dBm). The client held a "
+                    f"distant access point instead of moving to a closer one."
+                ),
+                causes=[
+                    "Client roaming threshold set too low (common on handheld scanners)",
+                    "No better AP was available at the point the signal degraded",
+                    "AP transmit power too high, so a distant cell still looks acceptable",
+                    "802.11r/k/v assistance not enabled on the controller",
+                ],
+                recommendations=[
+                    "Raise the roaming aggressiveness on the client adapter or MDM profile",
+                    "Check the Heatmap for coverage gaps along this route",
+                    "Reduce AP transmit power to sharpen cell edges",
+                    "Enable 802.11k/v so the AP can steer the client earlier",
+                ],
+                evidence={
+                    "late_roams": len(late),
+                    "total_roams": len(true_roams),
+                    "worst_handoff_rssi_dbm": worst["from_rssi"],
+                    "from_bssid": worst.get("from_bssid"),
+                    "to_bssid": worst.get("to_bssid"),
+                },
+            )
+        )
+
+    slow = [
+        r
+        for r in true_roams
+        if r.get("gap_ms") is not None and r["gap_ms"] >= th.roam_gap_warning_ms
+    ]
+    if slow:
+        worst_gap = max(slow, key=lambda r: r["gap_ms"])
+        findings.append(
+            Finding(
+                code="SLOW_ROAM",
+                severity=WARNING,
+                title="Hand-off takes long enough to break sessions",
+                summary=(
+                    f"{len(slow)} hand-off(s) took at least "
+                    f"{th.roam_gap_warning_ms:.0f} ms, the longest "
+                    f"{worst_gap['gap_ms']:.0f} ms. Scanner and voice sessions time out "
+                    f"across a gap this long."
+                ),
+                causes=[
+                    "Full re-authentication on every roam (no PMK caching)",
+                    "802.11r fast transition not enabled",
+                    "Slow RADIUS response during re-authentication",
+                    "Client scanning all channels before selecting a target",
+                ],
+                recommendations=[
+                    "Enable 802.11r fast transition or OKC on the WLAN",
+                    "Check RADIUS response time for this SSID",
+                    "Restrict the client's scan list to the channels actually in use",
+                ],
+                evidence={
+                    "slow_roams": len(slow),
+                    "total_roams": len(true_roams),
+                    "worst_gap_ms": round(worst_gap["gap_ms"], 1),
+                },
+            )
+        )
+
+    return findings
 
 
 def _rf_environment_findings(

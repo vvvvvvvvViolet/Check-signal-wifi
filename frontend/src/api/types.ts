@@ -218,6 +218,15 @@ export interface SurveyPoint {
   packet_loss_pct: number | null
   grade: Grade | null
   note: string | null
+  neighbors: NeighborReading[] | null
+}
+
+export interface NeighborReading {
+  bssid: string | null
+  ssid: string | null
+  rssi: number | null
+  channel: number | null
+  band: string | null
 }
 
 export interface ApMarker {
@@ -229,6 +238,24 @@ export interface ApMarker {
   y: number
 }
 
+export type HeatmapMetric = 'rssi' | 'redundancy'
+
+export interface CoverageSummary {
+  total_points: number
+  counts: Record<string, number>
+  percent: Record<string, number>
+  colors: Record<string, string>
+  /** Coverage metric only. */
+  rssi_min?: number | null
+  rssi_max?: number | null
+  rssi_avg?: number | null
+  /** Redundancy metric only. */
+  min?: number | null
+  max?: number | null
+  avg?: number | null
+  blind_spots?: number
+}
+
 export interface CoverageGrid {
   plan: FloorPlan
   grid: {
@@ -237,26 +264,36 @@ export interface CoverageGrid {
     cell_width_px: number
     cell_height_px: number
     matrix: (number | null)[][]
-    grades: (Grade | null)[][]
+    grades: (Grade | null)[][] | null
     min: number | null
     max: number | null
     covered_pct: number
     max_influence_px: number
     power: number
   } | null
-  summary: {
-    total_points: number
-    counts: Record<Grade, number>
-    percent: Record<Grade, number>
-    colors: Record<Grade, string>
-    rssi_min: number | null
-    rssi_max: number | null
-    rssi_avg: number | null
-  }
+  metric: HeatmapMetric
+  summary: CoverageSummary
   points: SurveyPoint[]
   access_points: ApMarker[]
   colors: Record<Grade, string>
+  available_filters: { ssids: string[]; bssids: string[]; bands: string[] }
+  applied_filters?: { ssid: string | null; bssid: string | null; band: string | null }
+  redundancy_min_rssi?: number
+  scanned_points?: number
   message?: string
+}
+
+/** One live reading from `/api/heatmap/measure`, used while walking. */
+export interface WalkReading {
+  ts: string
+  ssid: string | null
+  bssid: string | null
+  channel: number | null
+  band: string | null
+  rssi: number | null
+  ping_ms: number | null
+  packet_loss_pct: number | null
+  grade: Grade
 }
 
 export interface TestRecord {
@@ -306,6 +343,7 @@ export interface Thresholds {
   loss_warning_pct: number
   loss_critical_pct: number
   jitter_warning_ms: number
+  roam_gap_warning_ms: number
 }
 
 export interface AppSettings {
@@ -317,6 +355,7 @@ export interface AppSettings {
     ping_count: number
     ping_timeout_sec: number
     retention_days: number
+    survey_ping_count: number
   }
   site_name: string
 }

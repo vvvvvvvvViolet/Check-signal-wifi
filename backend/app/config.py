@@ -53,6 +53,8 @@ class Thresholds(BaseModel):
     loss_warning_pct: float = Field(default=2.0, ge=0, le=100)
     loss_critical_pct: float = Field(default=5.0, ge=0, le=100)
     jitter_warning_ms: float = Field(default=30.0, ge=0)
+    # A hand-off longer than this drops barcode-scanner and VoIP sessions.
+    roam_gap_warning_ms: float = Field(default=500.0, ge=0)
 
 
 class PingTargets(BaseModel):
@@ -74,6 +76,9 @@ class MonitorConfig(BaseModel):
     ping_count: int = Field(default=4, ge=1, le=20)
     ping_timeout_sec: float = Field(default=1.0, ge=0.2, le=10)
     retention_days: int = Field(default=90, ge=1)
+    # Capturing a survey point makes someone stand still while it runs, so it
+    # uses fewer probes than continuous monitoring, which nobody waits on.
+    survey_ping_count: int = Field(default=2, ge=1, le=20)
 
 
 class AppSettings(BaseModel):

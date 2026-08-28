@@ -11,7 +11,7 @@ CHECK SIGNAL WIFI
 ├── 📶 Signal Monitor   Continuous RSSI / latency / loss sampling
 ├── 🔍 WiFi Scanner     Every BSSID in range, and who shares your channel
 ├── 🔄 Roaming Test     Every AP hand-off, timestamped
-├── 🗺️ Heatmap          Survey points on your floor plan, interpolated
+├── 🗺️ Heatmap          Coverage and roaming-redundancy maps on your plan
 ├── 🧪 Network Test     WiFi → Gateway → LAN → DNS → Internet
 ├── 🚨 Diagnosis        Which layer is actually at fault
 ├── 📊 History          Saved spot-checks, filterable
@@ -58,10 +58,14 @@ cd frontend && npm run dev                          # terminal 2 → :5173
 ```
 
 ```bash
-cd backend && pytest          # 90 tests
+cd backend && pytest          # 121 tests
 cd backend && ruff check .
 cd frontend && npm run lint   # tsc --noEmit
 ```
+
+CI runs all of the above on every push, plus an end-to-end smoke test that
+starts the server, seeds a survey and checks every export format
+([`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
 
 ---
 
@@ -114,6 +118,35 @@ The verdict is the worst standing among signal, latency, packet loss and
 jitter. Defaults: warn below -67 dBm, above 50 ms, or above 2% loss; fail below
 -75 dBm, above 150 ms, or above 5% loss.
 
+### Surveying a floor
+
+**Point mode** takes a reading where you click. **Walk mode** is the fast way:
+click where you start, walk an aisle at a steady pace, click where you finish.
+Readings are taken continuously and placed along the line by *when* they were
+taken — so keep the route straight and the pace even, because that assumption is
+what positions them.
+
+Point mode also scans for other access points (this is skippable, since it costs
+a few seconds per point). That scan is what makes the **Redundancy** map
+possible.
+
+### Two maps, two questions
+
+| Map | Answers |
+|---|---|
+| **Coverage** | Is there signal here? |
+| **Redundancy** | Is there anywhere to *roam* to here? |
+
+They are not the same question, and the difference is where surveys usually go
+wrong. A spot can read a comfortable -50 dBm and still be where a forklift
+scanner drops its session, because the only AP it can hear is the one it is
+walking away from. Red on the redundancy map means no alternative AP is usable —
+a client that moves through it disconnects rather than hands over.
+
+Filter either map by **access point** (to see where one AP actually reaches,
+which is what you need to set its transmit power) or by **band** (2.4 and 5 GHz
+cover very differently; averaging them hides the problem you are surveying for).
+
 ### What the app will not claim
 
 Measurement honesty is a design goal, because a survey tool that cries wolf
@@ -130,6 +163,10 @@ gets ignored:
   hunting a fault that is not there.
 - **On the heatmap, floor with no measurement within range stays transparent**
   rather than being coloured green.
+- **A survey point captured without a scan is drawn grey on the redundancy map,
+  not red.** "Not measured" and "no fallback AP" are different findings.
+- **Retention deletes only telemetry.** Saved spot-checks and survey points are
+  a person's deliberate work and are never pruned.
 
 ---
 
@@ -170,6 +207,10 @@ against. The UI labels simulated readings clearly.
 | `CSW_LOG_LEVEL` | `INFO` | Standard logging levels |
 | `CSW_MOCK_SEED` | `1337` | Pins the simulator's noise |
 
+Adding a column to the schema is handled on startup for SQLite, so an existing
+database keeps working after an upgrade. Anything more than adding columns will
+need a real migration tool.
+
 Everything else — thresholds, ping targets, sample interval, the grading scale —
 lives in **Settings** and is stored in the database.
 
@@ -190,7 +231,8 @@ backend/app/
     ├── monitor.py     The sampling loop and its WebSocket fan-out
     ├── roaming.py     Roam vs. reconnect vs. network change
     ├── diagnosis.py   The rule engine
-    ├── heatmap.py     IDW interpolation
+    ├── heatmap.py     IDW interpolation and redundancy counting
+    ├── retention.py   Pruning telemetry (and nothing else)
     └── report.py      CSV / Excel / PDF writers
 frontend/src/
 ├── pages/             One file per screen

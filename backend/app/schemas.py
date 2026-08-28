@@ -104,6 +104,9 @@ class SurveyPointCreate(BaseModel):
     label: str | None = None
     note: str | None = None
     measure: bool = True
+    # Scanning records what else is audible here, which is what the redundancy
+    # map is built from. It costs a few seconds, so it is skippable.
+    scan: bool = True
     ssid: str | None = None
     bssid: str | None = None
     channel: int | None = None
@@ -111,6 +114,8 @@ class SurveyPointCreate(BaseModel):
     rssi: int | None = None
     ping_ms: float | None = None
     packet_loss_pct: float | None = None
+    # Other APs audible here, when importing a survey rather than measuring one.
+    neighbors: list[dict] | None = None
 
 
 class SurveyPointOut(ORMModel):
@@ -129,6 +134,37 @@ class SurveyPointOut(ORMModel):
     packet_loss_pct: float | None
     grade: str | None
     note: str | None
+    neighbors: list | None
+
+
+class WalkSample(BaseModel):
+    """One reading taken while walking, tagged with when it was taken."""
+
+    elapsed_ms: float = Field(ge=0)
+    ssid: str | None = None
+    bssid: str | None = None
+    channel: int | None = None
+    band: str | None = None
+    rssi: int | None = None
+    ping_ms: float | None = None
+    packet_loss_pct: float | None = None
+
+
+class WalkCapture(BaseModel):
+    """A straight walk between two points on the plan.
+
+    Positions are interpolated from each sample's elapsed time, which assumes a
+    steady pace along a straight line. Every commercial survey tool makes the
+    same assumption; it is why a walk should be one aisle rather than a lap of
+    the building.
+    """
+
+    start_x: float = Field(ge=0)
+    start_y: float = Field(ge=0)
+    end_x: float = Field(ge=0)
+    end_y: float = Field(ge=0)
+    label_prefix: str | None = None
+    samples: list[WalkSample] = Field(min_length=1)
 
 
 class AccessPointMarkerCreate(BaseModel):

@@ -89,6 +89,20 @@ Four specific decisions, each of which was a bug first:
    earlier one failed. ICMP to the gateway is frequently filtered while
    everything above it works.
 
+### Retention deletes telemetry, and only telemetry
+
+Sampling at a one-second interval writes roughly 86,000 rows a day, so
+`retention_days` has to actually delete something. Pruning runs when a monitor
+session starts: that is the one moment we know the database is about to grow,
+and it costs one query against an indexed column — no scheduler needed.
+
+Two distinctions matter. Pruning is by **row** age, not session age, so a run
+started 100 days ago and still going keeps the samples it took this morning. And
+`samples`/`roam_events` are machine-generated telemetry, while `test_records` and
+`survey_points` are things a person chose to record — deleting somebody's saved
+spot-check because it turned 90 days old would be destroying their work, not
+housekeeping.
+
 ### Diagnosis keys off combinations, not single metrics
 
 The rule that matters most is the pair:
@@ -99,6 +113,49 @@ The rule that matters most is the pair:
 The second rule states explicitly that the radio is fine, so nobody moves an
 access point to fix a congested uplink. Findings carry a code, a severity,
 causes and recommendations, and are sorted worst-first.
+
+The roaming rules work the same way, on history rather than the current reading.
+`STICKY_CLIENT` fires when a hand-off happened only *after* the signal on the
+old AP had fallen to critical — the classic warehouse fault, where a scanner on
+a forklift holds its original AP well past usefulness and drops mid-scan. It is
+invisible to any check that looks only at current RSSI, because by then the
+client has already moved on; the evidence is in `roam_events.from_rssi`, which
+is why those events are read rather than just counted. `SLOW_ROAM` covers the
+other half: the hand-off happened, but took long enough for the session on top
+of it to time out.
+
+### Coverage and redundancy are different maps
+
+Coverage answers "is there signal here". Redundancy answers "is there anywhere
+to roam to here", by counting how many *other* access points on the same SSID
+are usable from each point. A spot can read -50 dBm and still be where a moving
+client drops, because the only AP it can hear is the one it is leaving.
+
+That needs per-point scan data, so `survey_points.neighbors` records what else
+was audible. Two consequences worth stating:
+
+* The connected AP is excluded from the count. Including it would make every
+  point look like it has somewhere to fall back to.
+* Point captures scan; walk captures do not. A scan takes seconds, and during a
+  walk the technician has moved by the time it returns — the result would
+  describe somewhere they no longer are. Points captured without a scan are
+  *unknown*, not zero, and are drawn grey rather than red.
+
+### Walk capture assumes a steady pace, and says so
+
+Standing still for a probe at every point is what makes a manual survey take an
+afternoon. In walk mode the client samples continuously while the technician
+walks a straight run, and each sample is placed along the line by when it was
+taken relative to the whole walk.
+
+That assumes a steady pace along a straight line. It is the same assumption
+every commercial survey tool makes, and it is why the UI asks for one aisle
+rather than a lap of the building, and why the points are labelled as
+interpolated rather than presented as exact coordinates.
+
+Capture also uses `survey_ping_count` (2) rather than the monitoring count (4):
+someone is standing still waiting for a survey probe, and nobody waits on a
+monitoring one.
 
 ### Heatmap: IDW, bounded
 
@@ -114,6 +171,17 @@ extrapolate past the measured range — there is a test for exactly that.
 Rendering draws the grid into an offscreen canvas at one pixel per cell and
 scales it up with smoothing. The cost is proportional to the grid, not to the
 size of the plan image.
+
+### Schema changes
+
+`create_all` creates missing tables but never alters an existing one, so a
+database written by an earlier version would keep working right up until the
+first query touching a new column. `db._apply_column_additions` adds known
+missing columns on startup for SQLite.
+
+This is deliberately the smallest thing that works, and it only handles *added*
+columns. A real migration tool is warranted as soon as the schema starts
+changing shape rather than just growing.
 
 ### The monitor engine is a singleton
 
@@ -146,7 +214,9 @@ one.
 
 ## Testing
 
-90 tests, all against the simulated backend so they need no hardware.
+121 tests, all against the simulated backend so they need no hardware. CI runs
+them on every push, along with a smoke test that starts the server, seeds a
+survey and downloads every export format.
 
 | File | Covers |
 |---|---|
@@ -154,10 +224,11 @@ one.
 | `test_wifi_backends.py` | Band/channel maths and the `nmcli`/`iw`/`netsh` parsers |
 | `test_net_test.py` | Ping parsing on POSIX and Windows, and tool-missing vs. total-loss |
 | `test_roaming.py` | Roam vs. network change vs. reconnect |
-| `test_diagnosis.py` | Both spec scenarios, contention, channel plan, ordering |
+| `test_diagnosis.py` | Both spec scenarios, contention, channel plan, sticky/slow roaming, ordering |
 | `test_heatmap.py` | IDW exactness, gap preservation, no extrapolation, square cells |
 | `test_report.py` | CSV/Excel/PDF validity and PDF column layout |
-| `test_api.py` | The HTTP surface end to end, including the monitor lifecycle |
+| `test_api.py` | The HTTP surface end to end, including the monitor lifecycle, walk capture and the redundancy map |
+| `test_retention.py` | What gets pruned, what never does, and the column migration |
 
 ## Known limits
 
@@ -170,4 +241,8 @@ one.
   loop; the technician clicks where they are standing.
 - **The heatmap interpolates in 2D** and knows nothing about walls. A high
   `max_influence_px` will happily smooth coverage straight through a firewall,
-  so survey both sides of one.
+  so survey both sides of one. Modelling walls properly would mean letting the
+  user draw them with attenuation values and adding wall loss to the distance
+  metric — a real feature, not a tweak.
+- **Walk capture assumes a straight line at a steady pace.** There is no
+  positioning system in the loop to correct it.

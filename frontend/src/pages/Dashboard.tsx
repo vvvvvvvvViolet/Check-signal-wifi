@@ -1,9 +1,11 @@
-import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
+import { Suspense, lazy } from 'react'
 import { api } from '../api/client'
 import type { Dashboard } from '../api/types'
 import { Banner, Card, GradePill, Spinner, Stat, StatusDot } from '../components/ui'
 import { SignalGauge } from '../components/SignalGauge'
 import { usePolling } from '../hooks/usePolling'
+
+const TrendChart = lazy(() => import('../components/TrendChart'))
 import { clockTime, dbm, ms, pct, text, VERDICT_COLOR } from '../lib/format'
 
 export function DashboardPage() {
@@ -127,35 +129,11 @@ export function DashboardPage() {
             Not enough samples yet. Start the Signal Monitor to build a trend.
           </p>
         ) : (
-          <ResponsiveContainer width="100%" height={200}>
-            <LineChart data={data.trend.map((t) => ({ ...t, label: clockTime(t.ts) }))}>
-              <XAxis dataKey="label" stroke="#475569" fontSize={11} minTickGap={40} />
-              <YAxis
-                stroke="#475569"
-                fontSize={11}
-                domain={[-95, -25]}
-                width={40}
-                tickFormatter={(v) => `${v}`}
-              />
-              <Tooltip
-                contentStyle={{
-                  background: '#0f172a',
-                  border: '1px solid #1e293b',
-                  borderRadius: 8,
-                  fontSize: 12,
-                }}
-                formatter={(value: number) => [`${value} dBm`, 'RSSI']}
-              />
-              <Line
-                type="monotone"
-                dataKey="rssi"
-                stroke="#38bdf8"
-                strokeWidth={2}
-                dot={false}
-                isAnimationActive={false}
-              />
-            </LineChart>
-          </ResponsiveContainer>
+          <Suspense
+            fallback={<div className="h-[200px] animate-pulse rounded bg-slate-800/40" />}
+          >
+            <TrendChart data={data.trend} />
+          </Suspense>
         )}
       </Card>
     </div>

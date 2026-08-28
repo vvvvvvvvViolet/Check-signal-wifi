@@ -44,3 +44,29 @@ def init_db() -> None:
     from . import models  # noqa: F401  (registers the mappers)
 
     Base.metadata.create_all(engine)
+    if DATABASE_URL.startswith("sqlite"):
+        _apply_column_additions()
+
+
+# Columns added after the first release. `create_all` creates missing *tables*
+# but never alters an existing one, so a database written by an earlier version
+# would keep working right up until the first query touching a new column.
+#
+# This is deliberately the smallest thing that works. A real migration tool is
+# warranted as soon as the schema starts changing shape rather than just growing.
+_ADDED_COLUMNS: list[tuple[str, str, str]] = [
+    ("survey_points", "neighbors", "JSON"),
+]
+
+
+def _apply_column_additions() -> None:
+
+    with engine.begin() as conn:
+        for table, column, ddl_type in _ADDED_COLUMNS:
+            existing = {
+                row[1] for row in conn.exec_driver_sql(f"PRAGMA table_info({table})").fetchall()
+            }
+            if not existing:
+                continue  # table itself is new; create_all just made it correctly
+            if column not in existing:
+                conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}")

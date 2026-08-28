@@ -182,6 +182,12 @@ class SurveyPoint(Base):
     grade: Mapped[str | None] = mapped_column(String(16))
     note: Mapped[str | None] = mapped_column(Text)
 
+    # Every other BSSID audible here, as [{bssid, ssid, rssi, channel, band}].
+    # This is what makes a redundancy map possible: coverage answers "is there
+    # signal", redundancy answers "is there anywhere to roam to", and a client
+    # that can hear only one AP is a client that will drop when it moves.
+    neighbors: Mapped[list | None] = mapped_column(JSON)
+
     floor_plan: Mapped[FloorPlan] = relationship(back_populates="points")
 
 

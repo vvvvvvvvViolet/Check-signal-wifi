@@ -106,3 +106,91 @@ def test_findings_are_ordered_worst_first(settings: AppSettings):
     severities = [f["severity"] for f in report["findings"]]
     rank = {"critical": 0, "warning": 1, "info": 2}
     assert severities == sorted(severities, key=lambda s: rank[s])
+
+
+# --------------------------------------------------------------- roaming
+def roam(from_rssi=-58, to_rssi=-55, gap_ms=80.0, kind="roam"):
+    return {
+        "from_bssid": "AA:BB:CC:00:00:01",
+        "to_bssid": "AA:BB:CC:00:00:02",
+        "from_rssi": from_rssi,
+        "to_rssi": to_rssi,
+        "gap_ms": gap_ms,
+        "kind": kind,
+    }
+
+
+def test_sticky_client_is_detected_from_a_late_handoff(settings: AppSettings):
+    """The forklift-scanner fault: held the old AP down to -82 before moving."""
+    report = diagnosis.diagnose(
+        settings,
+        rssi=-55,  # healthy *now* - the fault is only visible in the roam history
+        ping_ms=4.0,
+        loss_pct=0.0,
+        roams=[roam(from_rssi=-82, to_rssi=-54)],
+    )
+    assert "STICKY_CLIENT" in codes(report)
+
+    finding = next(f for f in report["findings"] if f["code"] == "STICKY_CLIENT")
+    assert finding["evidence"]["worst_handoff_rssi_dbm"] == -82
+    assert any("roaming" in rec.lower() for rec in finding["recommendations"])
+
+
+def test_a_healthy_handoff_is_not_flagged(settings: AppSettings):
+    report = diagnosis.diagnose(
+        settings, rssi=-55, ping_ms=4.0, loss_pct=0.0, roams=[roam(from_rssi=-68)]
+    )
+    assert "STICKY_CLIENT" not in codes(report)
+    assert "SLOW_ROAM" not in codes(report)
+
+
+def test_a_reconnect_is_not_counted_as_a_sticky_roam(settings: AppSettings):
+    """A reconnect already involved an outage; it is a different fault."""
+    report = diagnosis.diagnose(
+        settings,
+        rssi=-55,
+        ping_ms=4.0,
+        loss_pct=0.0,
+        roams=[roam(from_rssi=-85, gap_ms=4000.0, kind="reconnect")],
+    )
+    assert "STICKY_CLIENT" not in codes(report)
+    assert "SLOW_ROAM" not in codes(report)
+
+
+def test_slow_handoff_is_flagged(settings: AppSettings):
+    report = diagnosis.diagnose(
+        settings, rssi=-55, ping_ms=4.0, loss_pct=0.0, roams=[roam(gap_ms=1800.0)]
+    )
+    assert "SLOW_ROAM" in codes(report)
+    finding = next(f for f in report["findings"] if f["code"] == "SLOW_ROAM")
+    assert finding["evidence"]["worst_gap_ms"] == 1800.0
+
+
+def test_fast_handoff_is_not_flagged(settings: AppSettings):
+    report = diagnosis.diagnose(
+        settings, rssi=-55, ping_ms=4.0, loss_pct=0.0, roams=[roam(gap_ms=60.0)]
+    )
+    assert "SLOW_ROAM" not in codes(report)
+
+
+def test_sticky_and_slow_are_independent(settings: AppSettings):
+    report = diagnosis.diagnose(
+        settings,
+        rssi=-55,
+        ping_ms=4.0,
+        loss_pct=0.0,
+        roams=[roam(from_rssi=-80, gap_ms=2000.0)],
+    )
+    assert {"STICKY_CLIENT", "SLOW_ROAM"} <= codes(report)
+
+
+def test_roams_with_missing_data_are_skipped_not_crashed(settings: AppSettings):
+    report = diagnosis.diagnose(
+        settings,
+        rssi=-55,
+        ping_ms=4.0,
+        loss_pct=0.0,
+        roams=[{"kind": "roam"}, {"from_rssi": None, "gap_ms": None, "kind": "roam"}],
+    )
+    assert "STICKY_CLIENT" not in codes(report)
+    assert "SLOW_ROAM" not in codes(report)

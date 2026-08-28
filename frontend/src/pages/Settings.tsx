@@ -157,6 +157,15 @@ export function SettingsPage() {
               patch('thresholds', { ...settings.thresholds, jitter_warning_ms: v })
             }
           />
+          <NumberField
+            label="Roam gap warning (ms)"
+            value={settings.thresholds.roam_gap_warning_ms}
+            step={50}
+            hint="Hand-offs slower than this break scanner and voice sessions"
+            onChange={(v) =>
+              patch('thresholds', { ...settings.thresholds, roam_gap_warning_ms: v })
+            }
+          />
         </div>
       </Card>
 
@@ -239,6 +248,13 @@ export function SettingsPage() {
             value={settings.monitor.ping_count}
             step={1}
             onChange={(v) => patch('monitor', { ...settings.monitor, ping_count: v })}
+          />
+          <NumberField
+            label="Pings per survey point"
+            value={settings.monitor.survey_ping_count}
+            step={1}
+            hint="Fewer than monitoring: someone is standing still while it runs"
+            onChange={(v) => patch('monitor', { ...settings.monitor, survey_ping_count: v })}
           />
           <NumberField
             label="Ping timeout (s)"

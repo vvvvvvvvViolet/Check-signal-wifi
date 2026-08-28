@@ -16,6 +16,7 @@ from datetime import UTC, datetime
 
 from ..db import SessionLocal
 from ..models import MonitorSession, RoamEvent, Sample
+from . import retention
 from .probe import snapshot_to_sample_kwargs, take_snapshot
 from .roaming import RoamDetector
 from .settings_store import load_settings
@@ -76,6 +77,15 @@ class MonitorEngine:
             with SessionLocal() as db:
                 settings = load_settings(db)
                 interval = interval_sec or settings.monitor.interval_sec
+
+                # Prune here rather than on a timer: it is the one moment we know
+                # the database is about to grow, and it costs one query against
+                # an indexed column.
+                try:
+                    retention.prune(db, settings.monitor.retention_days)
+                except Exception:  # housekeeping must never block a survey
+                    log.exception("Retention prune failed; starting the session anyway")
+
                 session = MonitorSession(
                     name=name,
                     area=area,

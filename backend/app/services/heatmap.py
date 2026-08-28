@@ -105,6 +105,65 @@ def _idw_at(
     return numerator / denominator
 
 
+REDUNDANCY_COLORS = {
+    0: "#ef4444",  # nowhere to roam - the client drops when it moves
+    1: "#facc15",  # one fallback, no margin
+    2: "#4ade80",
+    3: "#16a34a",
+}
+REDUNDANCY_LABELS = {
+    0: "No alternative AP",
+    1: "1 alternative",
+    2: "2 alternatives",
+    3: "3 or more",
+}
+
+
+def redundancy_at(neighbors: list | None, min_rssi: int, ssid: str | None = None) -> int:
+    """How many *other* access points are usable from this spot.
+
+    Coverage and redundancy are different questions. A point can sit at -45 dBm
+    and still be the place a forklift drops its session, because the only AP it
+    can hear is the one it is about to walk away from. Counting usable
+    alternatives is what makes that visible on a plan.
+    """
+    if not neighbors:
+        return 0
+    seen: set[str] = set()
+    for neighbor in neighbors:
+        if not isinstance(neighbor, dict):
+            continue
+        rssi = neighbor.get("rssi")
+        bssid = neighbor.get("bssid")
+        if bssid is None or rssi is None or rssi < min_rssi:
+            continue
+        # Only the surveyed network counts; a guest SSID is not a fallback.
+        if ssid is not None and neighbor.get("ssid") != ssid:
+            continue
+        seen.add(bssid)
+    return len(seen)
+
+
+def summarise_redundancy(points: list[Point]) -> dict:
+    """Breakdown of how many points have how many fallbacks."""
+    counts: dict[str, int] = {label: 0 for label in REDUNDANCY_LABELS.values()}
+    for point in points:
+        bucket = min(3, int(round(point.value)))
+        counts[REDUNDANCY_LABELS[max(0, bucket)]] += 1
+    total = sum(counts.values())
+    values = [p.value for p in points]
+    return {
+        "total_points": total,
+        "counts": counts,
+        "percent": {k: round(100 * v / total, 1) if total else 0.0 for k, v in counts.items()},
+        "colors": {REDUNDANCY_LABELS[k]: v for k, v in REDUNDANCY_COLORS.items()},
+        "min": int(min(values)) if values else None,
+        "max": int(max(values)) if values else None,
+        "avg": round(sum(values) / len(values), 2) if values else None,
+        "blind_spots": sum(1 for v in values if v < 1),
+    }
+
+
 def summarise(points: list[Point], bands: SignalBands | None = None) -> dict:
     """Coverage breakdown by grade, for the legend and the report."""
     bands = bands or SignalBands()

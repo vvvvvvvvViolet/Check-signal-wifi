@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..db import get_session
@@ -49,7 +49,22 @@ async def run_diagnosis(
         scan = [n.as_dict() for n in networks]
 
     since = datetime.now(UTC) - timedelta(minutes=window_minutes)
-    roam_count = db.scalar(select(func.count(RoamEvent.id)).where(RoamEvent.ts >= since)) or 0
+    # The events themselves, not just the count: how *late* each hand-off was is
+    # what reveals a sticky client, and a count cannot show that.
+    recent_roams = db.scalars(
+        select(RoamEvent).where(RoamEvent.ts >= since).order_by(RoamEvent.ts)
+    ).all()
+    roams = [
+        {
+            "from_bssid": r.from_bssid,
+            "to_bssid": r.to_bssid,
+            "from_rssi": r.from_rssi,
+            "to_rssi": r.to_rssi,
+            "gap_ms": r.gap_ms,
+            "kind": "roam",
+        }
+        for r in recent_roams
+    ]
 
     report = diagnosis_service.diagnose(
         settings,
@@ -61,8 +76,9 @@ async def run_diagnosis(
         band=link.get("band"),
         connected=bool(link.get("connected")),
         scan=scan,
-        roam_count=roam_count,
+        roam_count=len(roams),
         window_minutes=window_minutes,
+        roams=roams,
     )
     return {"ts": snapshot["ts"], "link": link, "summary": summary, **report}
 

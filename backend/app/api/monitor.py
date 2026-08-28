@@ -7,13 +7,15 @@ import contextlib
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
-from sqlalchemy import delete, func, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..db import get_session
 from ..models import MonitorSession, RoamEvent, Sample
 from ..schemas import MonitorSessionOut, MonitorStartRequest, RoamEventOut, SampleOut
+from ..services import retention
 from ..services.monitor import engine
+from ..services.settings_store import load_settings
 
 router = APIRouter(prefix="/api/monitor", tags=["monitor"])
 
@@ -147,13 +149,21 @@ async def list_roams(
     return list(reversed(db.scalars(stmt).all()))
 
 
-@router.delete("/samples", status_code=204, response_model=None)
+@router.delete("/samples")
 async def purge_samples(
-    older_than_days: int = Query(default=90, ge=0, le=3650), db: Session = Depends(get_session)
-) -> None:
-    cutoff = datetime.now(UTC) - timedelta(days=older_than_days)
-    db.execute(delete(Sample).where(Sample.ts < cutoff))
-    db.commit()
+    older_than_days: int | None = Query(
+        default=None, ge=1, le=3650, description="Defaults to the configured retention period"
+    ),
+    db: Session = Depends(get_session),
+) -> dict:
+    """Prune telemetry now instead of waiting for the next session to start.
+
+    Saved spot-checks and survey points are never touched - see
+    ``services/retention.py`` for why.
+    """
+    settings = load_settings(db)
+    days = older_than_days or settings.monitor.retention_days
+    return {"older_than_days": days, "removed": retention.prune(db, days)}
 
 
 @router.websocket("/ws")

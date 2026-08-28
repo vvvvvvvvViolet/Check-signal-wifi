@@ -3,7 +3,14 @@
 from __future__ import annotations
 
 import pytest
-from backend.app.services.heatmap import Point, grade_matrix, interpolate_grid, summarise
+from backend.app.services.heatmap import (
+    Point,
+    grade_matrix,
+    interpolate_grid,
+    redundancy_at,
+    summarise,
+    summarise_redundancy,
+)
 
 
 def test_interpolation_is_exact_at_a_measured_point():
@@ -62,3 +69,49 @@ def test_summary_counts_by_grade():
 def test_grade_matrix_preserves_gaps():
     matrix = [[-50.0, None], [-80.0, -66.0]]
     assert grade_matrix(matrix) == [["EXCELLENT", None], ["POOR", "FAIR"]]
+
+
+# ----------------------------------------------------------- redundancy
+def test_redundancy_counts_only_usable_alternatives():
+    neighbors = [
+        {"bssid": "AA:00", "ssid": "Factory-WiFi", "rssi": -60},
+        {"bssid": "AA:01", "ssid": "Factory-WiFi", "rssi": -68},
+        {"bssid": "AA:02", "ssid": "Factory-WiFi", "rssi": -85},  # too weak to roam to
+    ]
+    assert redundancy_at(neighbors, -70, "Factory-WiFi") == 2
+
+
+def test_redundancy_ignores_other_networks():
+    """A guest SSID is not somewhere a factory scanner can fall back to."""
+    neighbors = [
+        {"bssid": "AA:00", "ssid": "Factory-WiFi", "rssi": -60},
+        {"bssid": "BB:00", "ssid": "Guest-WiFi", "rssi": -55},
+    ]
+    assert redundancy_at(neighbors, -70, "Factory-WiFi") == 1
+    # With no SSID given, every audible AP counts.
+    assert redundancy_at(neighbors, -70, None) == 2
+
+
+def test_redundancy_deduplicates_repeated_bssids():
+    neighbors = [
+        {"bssid": "AA:00", "ssid": "X", "rssi": -60},
+        {"bssid": "AA:00", "ssid": "X", "rssi": -62},
+    ]
+    assert redundancy_at(neighbors, -70, "X") == 1
+
+
+def test_redundancy_of_nothing_is_zero_not_an_error():
+    assert redundancy_at(None, -70) == 0
+    assert redundancy_at([], -70) == 0
+    assert redundancy_at([{"rssi": -50}, "junk", {"bssid": "AA:00"}], -70) == 0
+
+
+def test_redundancy_summary_flags_blind_spots():
+    points = [Point(0, 0, 0.0), Point(1, 1, 1.0), Point(2, 2, 3.0), Point(3, 3, 2.0)]
+    stats = summarise_redundancy(points)
+    assert stats["total_points"] == 4
+    assert stats["blind_spots"] == 1
+    assert stats["counts"]["No alternative AP"] == 1
+    assert stats["counts"]["3 or more"] == 1
+    assert stats["min"] == 0
+    assert stats["max"] == 3

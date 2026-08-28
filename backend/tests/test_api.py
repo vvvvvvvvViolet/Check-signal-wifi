@@ -264,3 +264,226 @@ def test_monitor_websocket_backfills_then_streams(client):
         assert hello["type"] == "hello"
         assert "status" in hello
         assert isinstance(hello["backfill"], list)
+
+
+# --------------------------------------------- walk capture & redundancy
+def _make_plan(client, name="Walk-Plan"):
+    return client.post(
+        "/api/heatmap/plans",
+        files={"file": ("plan.png", make_plan_image(1000, 500), "image/png")},
+        data={"name": name},
+    ).json()
+
+
+def test_measure_endpoint_reads_without_saving(client):
+    plan = _make_plan(client, "Measure-Plan")
+    body = client.get("/api/heatmap/measure").json()
+
+    assert body["ssid"] == "Factory-WiFi"
+    assert body["rssi"] is not None
+    assert body["grade"] in {"EXCELLENT", "GOOD", "FAIR", "POOR"}
+    # Nothing was persisted by measuring.
+    assert client.get(f"/api/heatmap/plans/{plan['id']}/points").json() == []
+
+
+def test_walk_capture_spreads_points_along_the_route(client):
+    plan = _make_plan(client)
+    body = client.post(
+        f"/api/heatmap/plans/{plan['id']}/walk",
+        json={
+            "start_x": 100,
+            "start_y": 200,
+            "end_x": 900,
+            "end_y": 200,
+            "label_prefix": "Aisle 3",
+            "samples": [
+                {"elapsed_ms": 0, "rssi": -50, "ssid": "Factory-WiFi"},
+                {"elapsed_ms": 5000, "rssi": -60, "ssid": "Factory-WiFi"},
+                {"elapsed_ms": 10000, "rssi": -70, "ssid": "Factory-WiFi"},
+            ],
+        },
+    )
+    assert body.status_code == 201
+    points = body.json()
+
+    assert [round(p["x"]) for p in points] == [100, 500, 900]
+    assert all(p["y"] == 200 for p in points)
+    assert [p["label"] for p in points] == ["Aisle 3 1", "Aisle 3 2", "Aisle 3 3"]
+    assert [p["grade"] for p in points] == ["EXCELLENT", "GOOD", "FAIR"]
+    assert all("interpolated" in p["note"] for p in points)
+
+
+def test_walk_capture_orders_samples_by_time(client):
+    plan = _make_plan(client, "Unordered-Walk")
+    points = client.post(
+        f"/api/heatmap/plans/{plan['id']}/walk",
+        json={
+            "start_x": 0,
+            "start_y": 0,
+            "end_x": 100,
+            "end_y": 0,
+            "samples": [
+                {"elapsed_ms": 1000, "rssi": -60},
+                {"elapsed_ms": 0, "rssi": -50},
+            ],
+        },
+    ).json()
+    assert [p["rssi"] for p in points] == [-50, -60]
+    assert [round(p["x"]) for p in points] == [0, 100]
+
+
+def test_walk_capture_with_a_single_sample_lands_on_the_start(client):
+    plan = _make_plan(client, "Single-Walk")
+    points = client.post(
+        f"/api/heatmap/plans/{plan['id']}/walk",
+        json={
+            "start_x": 40,
+            "start_y": 60,
+            "end_x": 900,
+            "end_y": 400,
+            "samples": [{"elapsed_ms": 0, "rssi": -55}],
+        },
+    ).json()
+    assert len(points) == 1
+    assert (points[0]["x"], points[0]["y"]) == (40.0, 60.0)
+
+
+def test_walk_capture_rejects_a_route_off_the_plan(client):
+    plan = _make_plan(client, "Offplan-Walk")
+    response = client.post(
+        f"/api/heatmap/plans/{plan['id']}/walk",
+        json={
+            "start_x": 0,
+            "start_y": 0,
+            "end_x": 99999,
+            "end_y": 0,
+            "samples": [{"elapsed_ms": 0, "rssi": -55}],
+        },
+    )
+    assert response.status_code == 400
+
+
+def test_walk_capture_requires_at_least_one_sample(client):
+    plan = _make_plan(client, "Empty-Walk")
+    response = client.post(
+        f"/api/heatmap/plans/{plan['id']}/walk",
+        json={"start_x": 0, "start_y": 0, "end_x": 10, "end_y": 0, "samples": []},
+    )
+    assert response.status_code == 422
+
+
+def test_grid_filters_by_bssid_and_band(client):
+    plan = _make_plan(client, "Filter-Plan")
+    for x, bssid, band, channel in (
+        (100, "AA:BB:CC:DD:EE:01", "5 GHz", 36),
+        (300, "AA:BB:CC:DD:EE:01", "5 GHz", 36),
+        (500, "AA:BB:CC:DD:EE:02", "2.4 GHz", 6),
+        (700, "AA:BB:CC:DD:EE:02", "2.4 GHz", 6),
+    ):
+        client.post(
+            f"/api/heatmap/plans/{plan['id']}/points",
+            json={
+                "x": x,
+                "y": 250,
+                "measure": False,
+                "ssid": "Factory-WiFi",
+                "bssid": bssid,
+                "band": band,
+                "channel": channel,
+                "rssi": -55,
+            },
+        )
+
+    everything = client.get(f"/api/heatmap/plans/{plan['id']}/grid").json()
+    assert everything["summary"]["total_points"] == 4
+    assert set(everything["available_filters"]["bssids"]) == {
+        "AA:BB:CC:DD:EE:01",
+        "AA:BB:CC:DD:EE:02",
+    }
+    assert set(everything["available_filters"]["bands"]) == {"5 GHz", "2.4 GHz"}
+
+    one_ap = client.get(
+        f"/api/heatmap/plans/{plan['id']}/grid", params={"bssid": "AA:BB:CC:DD:EE:01"}
+    ).json()
+    assert one_ap["summary"]["total_points"] == 2
+    assert one_ap["applied_filters"]["bssid"] == "AA:BB:CC:DD:EE:01"
+    # Filters stay offerable after one is applied.
+    assert len(one_ap["available_filters"]["bssids"]) == 2
+
+    five_ghz = client.get(f"/api/heatmap/plans/{plan['id']}/grid", params={"band": "5"}).json()
+    assert five_ghz["summary"]["total_points"] == 2
+
+    nothing = client.get(
+        f"/api/heatmap/plans/{plan['id']}/grid", params={"bssid": "ZZ:ZZ:ZZ:ZZ:ZZ:ZZ"}
+    ).json()
+    assert nothing["grid"] is None
+    assert "match this filter" in nothing["message"]
+
+
+def test_capture_with_scan_enables_the_redundancy_map(client):
+    plan = _make_plan(client, "Redundancy-Plan")
+    for x in (150, 400, 650, 850):
+        created = client.post(
+            f"/api/heatmap/plans/{plan['id']}/points",
+            json={"x": x, "y": 250, "measure": True, "scan": True},
+        )
+        assert created.status_code == 201
+        assert created.json()["neighbors"] is not None
+
+    grid = client.get(
+        f"/api/heatmap/plans/{plan['id']}/grid", params={"metric": "redundancy"}
+    ).json()
+    assert grid["metric"] == "redundancy"
+    assert grid["grid"] is not None
+    assert grid["scanned_points"] == 4
+    assert "blind_spots" in grid["summary"]
+    # The simulator always has more than one Factory-WiFi AP audible.
+    assert grid["summary"]["max"] >= 1
+
+
+def test_redundancy_map_says_so_when_nothing_was_scanned(client):
+    plan = _make_plan(client, "Unscanned-Plan")
+    client.post(
+        f"/api/heatmap/plans/{plan['id']}/points",
+        json={"x": 100, "y": 100, "measure": True, "scan": False},
+    )
+    grid = client.get(
+        f"/api/heatmap/plans/{plan['id']}/grid", params={"metric": "redundancy"}
+    ).json()
+    assert grid["grid"] is None
+    assert "scanning enabled" in grid["message"]
+
+
+def test_grid_rejects_an_unknown_metric(client):
+    plan = _make_plan(client, "Metric-Plan")
+    response = client.get(f"/api/heatmap/plans/{plan['id']}/grid", params={"metric": "vibes"})
+    assert response.status_code == 422
+
+
+def test_imported_points_can_carry_their_own_neighbour_list(client):
+    """Importing a survey taken elsewhere must not lose the redundancy data."""
+    plan = _make_plan(client, "Imported-Plan")
+    created = client.post(
+        f"/api/heatmap/plans/{plan['id']}/points",
+        json={
+            "x": 100,
+            "y": 100,
+            "measure": False,
+            "ssid": "Factory-WiFi",
+            "bssid": "AA:BB:CC:DD:EE:01",
+            "rssi": -55,
+            "neighbors": [
+                {"bssid": "AA:BB:CC:DD:EE:02", "ssid": "Factory-WiFi", "rssi": -62},
+                {"bssid": "AA:BB:CC:DD:EE:03", "ssid": "Factory-WiFi", "rssi": -88},
+            ],
+        },
+    )
+    assert created.status_code == 201
+    assert len(created.json()["neighbors"]) == 2
+
+    grid = client.get(
+        f"/api/heatmap/plans/{plan['id']}/grid", params={"metric": "redundancy"}
+    ).json()
+    assert grid["scanned_points"] == 1
+    # Only the -62 dBm neighbour is usable; the -88 one is not somewhere to roam.
+    assert grid["summary"]["max"] == 1

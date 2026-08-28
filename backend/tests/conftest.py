@@ -16,8 +16,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import pytest  # noqa: E402
 from backend.app.config import AppSettings  # noqa: E402
+from backend.app.db import init_db  # noqa: E402
 from backend.app.main import app  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _schema():
+    """Create the tables once.
+
+    The app does this in its lifespan, but tests that talk to the database
+    directly never start the app.
+    """
+    init_db()
 
 
 @pytest.fixture(scope="session")
