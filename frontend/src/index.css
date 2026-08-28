@@ -1,0 +1,75 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply bg-slate-950 text-slate-100 antialiased;
+    font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
+      'Noto Sans Thai', 'Helvetica Neue', sans-serif;
+  }
+
+  /* Numeric readouts line up column-wise only with tabular figures. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl border border-slate-800 bg-slate-900/60 p-4 shadow-sm;
+  }
+
+  .card-title {
+    @apply text-xs font-semibold uppercase tracking-wider text-slate-400;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-slate-700
+           bg-slate-800 px-3 py-2 text-sm font-medium text-slate-100 transition
+           hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .btn-primary {
+    @apply border-sky-500 bg-sky-600 hover:bg-sky-500;
+  }
+
+  .btn-danger {
+    @apply border-red-500/60 bg-red-600/80 hover:bg-red-600;
+  }
+
+  .input {
+    @apply w-full rounded-lg border border-slate-700 bg-slate-950/60 px-3 py-2 text-sm
+           text-slate-100 outline-none transition placeholder:text-slate-600
+           focus:border-sky-500 focus:ring-1 focus:ring-sky-500;
+  }
+
+  .label {
+    @apply mb-1 block text-xs font-medium uppercase tracking-wide text-slate-400;
+  }
+
+  .table-wrap {
+    @apply overflow-x-auto rounded-xl border border-slate-800;
+  }
+
+  .table {
+    @apply w-full min-w-[640px] border-collapse text-sm;
+  }
+
+  .table thead th {
+    @apply sticky top-0 z-10 whitespace-nowrap bg-slate-900 px-3 py-2 text-left text-xs
+           font-semibold uppercase tracking-wider text-slate-400;
+  }
+
+  .table tbody td {
+    @apply whitespace-nowrap border-t border-slate-800 px-3 py-2 text-slate-200;
+  }
+
+  .table tbody tr:hover {
+    @apply bg-slate-900/60;
+  }
+}

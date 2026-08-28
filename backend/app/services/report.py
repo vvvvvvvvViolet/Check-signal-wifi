@@ -19,6 +19,7 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
+from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.platypus import (
     PageBreak,
     Paragraph,
@@ -29,6 +30,10 @@ from reportlab.platypus import (
 )
 
 from .quality import GRADE_COLOR
+
+# Horizontal cell padding used by the data table, in points. Column widths are
+# computed against this exact value, so the two must stay in step.
+_CELL_PADDING = 3.0
 
 RESULT_FILL = {
     "PASS": "C6EFCE",
@@ -191,8 +196,7 @@ def to_pdf(
     data = [[Paragraph(f"<b>{h}</b>", cell) for h in headers]]
     data += [[Paragraph(_fmt(v), cell) for v in row] for row in materialised]
 
-    available = doc.width
-    table = Table(data, repeatRows=1, colWidths=[available / len(headers)] * len(headers))
+    table = Table(data, repeatRows=1, colWidths=_column_widths(headers, materialised, doc.width))
     style = [
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1f4e79")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
@@ -201,6 +205,8 @@ def to_pdf(
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f7f9fb")]),
         ("TOPPADDING", (0, 0), (-1, -1), 3),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ("LEFTPADDING", (0, 0), (-1, -1), _CELL_PADDING),
+        ("RIGHTPADDING", (0, 0), (-1, -1), _CELL_PADDING),
     ]
     # Tint the verdict column so a reviewer can scan the failures at a glance.
     if "Result" in headers:
@@ -242,6 +248,51 @@ def to_pdf(
 
     doc.build(story)
     return stream.getvalue()
+
+
+def _column_widths(
+    headers: Sequence[str],
+    rows: Sequence[Sequence],
+    available: float,
+    *,
+    font: str = "Helvetica",
+    font_size: float = 7.5,
+    padding: float = _CELL_PADDING,
+) -> list[float]:
+    """Share the page width out by how wide each column's text actually is.
+
+    Character counts are not good enough here: "EXCELLENT" is far wider than
+    nine digits in the same font, so counting characters wraps the verdict
+    column while the Channel column sits half empty. Measuring with the font's
+    own metrics - and budgeting for the cell padding, which costs real width
+    once a table has fifteen columns - lets every value fit that can fit.
+
+    Columns that still cannot all fit are scaled down together, so the widest
+    text degrades first rather than one long note starving everything else.
+    """
+    ink = 2 * padding
+
+    natural: list[float] = []
+    for index, header in enumerate(headers):
+        widest = stringWidth(header, font, font_size) / 2  # headers may wrap
+        for row in rows:
+            if index < len(row):
+                widest = max(widest, stringWidth(_fmt(row[index]), font, font_size))
+        natural.append(widest + ink)
+
+    total = sum(natural)
+    if total <= available:
+        # Everything fits: hand the slack to the columns in proportion.
+        return [width * available / total for width in natural]
+
+    # Over budget. Protect a readable floor for narrow columns and take the
+    # overflow from the wide ones, which have the most to give.
+    floor = min(available / len(headers), 34.0)
+    flexible = [max(0.0, width - floor) for width in natural]
+    slack = available - floor * len(headers)
+    if slack <= 0 or sum(flexible) == 0:
+        return [available / len(headers)] * len(headers)
+    return [floor + extra * slack / sum(flexible) for extra in flexible]
 
 
 def grade_hex(grade: str | None) -> str:

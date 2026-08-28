@@ -16,6 +16,8 @@ dist/
 # App data
 data/*.db
 data/*.db-journal
+data/*.db-wal
+data/*.db-shm
 data/floorplans/*
 !data/floorplans/.gitkeep
 exports/
