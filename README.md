@@ -21,6 +21,22 @@ CHECK SIGNAL WIFI
 
 ---
 
+## Just want to run it?
+
+Download a ready-made build — no Python, no Node.js, nothing to install:
+
+**[Latest builds →](../../actions/workflows/build-desktop.yml)** — open the most
+recent run and download the artifact for your platform (Windows, macOS or Linux).
+Unzip, double-click, and the app opens in your browser.
+
+`packaging/README-desktop.txt` ships alongside it and covers the first-run
+security prompts, where survey data is stored, and what to do when the window
+closes too fast to read.
+
+Everything below is for running from source or developing.
+
+---
+
 ## Quick start
 
 Needs Python 3.11+ and Node.js 20+ ([nodejs.org](https://nodejs.org) - if
@@ -241,6 +257,8 @@ lives in **Settings** and is stored in the database.
 ## Layout
 
 ```
+launcher.py            Desktop entry point (port choice, browser, banner)
+packaging/             PyInstaller spec and the end-user readme
 backend/app/
 ├── main.py            FastAPI app; serves the built UI
 ├── config.py          AppSettings: bands, thresholds, ping targets
@@ -261,6 +279,23 @@ frontend/src/
 ├── components/        Gauge, heatmap canvas, layout, shared UI
 └── api/               Typed client and response shapes
 ```
+
+### Building the desktop app yourself
+
+```bash
+pip install -r backend/requirements-dev.txt   # includes PyInstaller
+npm --prefix frontend ci
+npm --prefix frontend run build               # the spec refuses to build without this
+pyinstaller packaging/check-signal-wifi.spec --noconfirm
+```
+
+The executable lands in `dist/`. Build on the platform you are targeting —
+PyInstaller does not cross-compile, which is why CI builds all three.
+
+When packaged, survey data moves out of the repo to the per-user application
+directory (`%LOCALAPPDATA%\CheckSignalWiFi` on Windows, `~/Library/Application
+Support/CheckSignalWiFi` on macOS, `~/.local/share/CheckSignalWiFi` on Linux),
+because the executable may sit somewhere the user cannot write.
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the design decisions and
 [`docs/API.md`](docs/API.md) for the endpoint reference.

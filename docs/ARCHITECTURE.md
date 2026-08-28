@@ -172,6 +172,40 @@ Rendering draws the grid into an offscreen canvas at one pixel per cell and
 scales it up with smoothing. The cost is proportional to the grid, not to the
 size of the plan image.
 
+### Packaging: a web service that behaves like a program
+
+The application is a local web service, but the people who need it are
+technicians on factory laptops, not developers - and every install step is a
+place the tool gets abandoned. `launcher.py` plus a PyInstaller bundle turns it
+into something that runs from a double-click with nothing installed first.
+
+Three details carry most of the weight:
+
+1. **Written data leaves the bundle.** PyInstaller unpacks into a temp
+   directory it wipes on exit, and `BASE_DIR` pointed there once frozen - so a
+   survey would have vanished when the window closed. `config.py` now sends
+   writes to the per-user application directory instead, and only read-only
+   assets (the built UI, ReportLab's fonts) stay in the bundle. The executable
+   may also live somewhere unwritable, like Program Files or a USB stick, which
+   rules out "next to the exe" as well.
+2. **Dynamic imports are named explicitly.** uvicorn resolves its loop and
+   protocol implementations by string at runtime, and SQLAlchemy picks its
+   DBAPI by dialect name; a frozen bundle cannot follow either. The launcher
+   passes `loop`/`http`/`ws` explicitly and the spec declares the rest as
+   hidden imports. This class of failure only appears at runtime, which is why
+   CI runs the built executable and hits the PDF export - the one path that
+   needs ReportLab's bundled fonts - rather than trusting that it compiled.
+3. **A second launch is not a second server.** Double-clicking twice is normal
+   user behaviour. The launcher checks whether the thing holding the port
+   answers *our* health endpoint: if so it reopens the browser and exits; if
+   it is some unrelated service, it quietly moves to a free port and says so.
+
+The console window is kept deliberately. It carries the URL, the data location
+and the simulated-readings warning, and closing it is the stop button. Output is
+explicitly flushed because stdout is block-buffered whenever it is not a
+console - without that, redirecting the output to a log file to debug a problem
+hides the very lines that explain it.
+
 ### Schema changes
 
 `create_all` creates missing tables but never alters an existing one, so a
@@ -214,9 +248,10 @@ one.
 
 ## Testing
 
-121 tests, all against the simulated backend so they need no hardware. CI runs
+134 tests, all against the simulated backend so they need no hardware. CI runs
 them on every push, along with a smoke test that starts the server, seeds a
-survey and downloads every export format.
+survey and downloads every export format - and a separate workflow that builds
+the desktop executable for all three platforms and smoke-tests each one.
 
 | File | Covers |
 |---|---|
@@ -229,6 +264,7 @@ survey and downloads every export format.
 | `test_report.py` | CSV/Excel/PDF validity and PDF column layout |
 | `test_api.py` | The HTTP surface end to end, including the monitor lifecycle, walk capture and the redundancy map |
 | `test_retention.py` | What gets pruned, what never does, and the column migration |
+| `test_launcher.py` | Port selection, duplicate-launch detection, and that a frozen build keeps data out of the disposable bundle directory |
 
 ## Known limits
 

@@ -28,3 +28,8 @@ exports/
 .DS_Store
 .idea/
 .vscode/
+
+# PyInstaller build output
+build/
+dist/
+*.spec.bak

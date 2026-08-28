@@ -11,15 +11,55 @@ Two different things live here and they are deliberately kept apart:
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-BASE_DIR = Path(__file__).resolve().parent.parent.parent
-DATA_DIR = Path(os.environ.get("CSW_DATA_DIR", BASE_DIR / "data"))
+APP_DIR_NAME = "CheckSignalWiFi"
+
+# PyInstaller sets ``frozen`` and unpacks the bundle into a temp directory that
+# is wiped when the process exits. Read-only assets live there; anything the app
+# writes must not, or a survey would vanish the moment the window is closed.
+IS_FROZEN = bool(getattr(sys, "frozen", False))
+
+if IS_FROZEN:
+    BUNDLE_DIR = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+    BASE_DIR = Path(sys.executable).resolve().parent
+else:
+    BUNDLE_DIR = BASE_DIR = Path(__file__).resolve().parent.parent.parent
+
+
+def _default_data_dir() -> Path:
+    """Where surveys live.
+
+    Running from a checkout, the repo's own ``data/`` is the least surprising
+    place. Running as a packaged app, the executable may sit somewhere the user
+    cannot write (Program Files, a read-only share, a USB stick), so data goes
+    to the per-user application directory the platform reserves for exactly this.
+    """
+    if not IS_FROZEN:
+        return BASE_DIR / "data"
+    if sys.platform.startswith("win"):
+        root = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
+    elif sys.platform == "darwin":
+        root = Path.home() / "Library" / "Application Support"
+    else:
+        root = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
+    return root / APP_DIR_NAME
+
+
+DATA_DIR = Path(os.environ.get("CSW_DATA_DIR") or _default_data_dir())
 FLOORPLAN_DIR = DATA_DIR / "floorplans"
-EXPORT_DIR = Path(os.environ.get("CSW_EXPORT_DIR", BASE_DIR / "exports"))
+EXPORT_DIR = Path(os.environ.get("CSW_EXPORT_DIR") or (DATA_DIR / "exports"))
 DB_PATH = DATA_DIR / "check_signal_wifi.db"
+
+# The built UI ships inside the bundle when frozen, and sits in the frontend
+# workspace when running from a checkout.
+FRONTEND_DIST = Path(
+    os.environ.get("CSW_FRONTEND_DIST")
+    or (BUNDLE_DIR / "frontend_dist" if IS_FROZEN else BASE_DIR / "frontend" / "dist")
+)
 
 for _d in (DATA_DIR, FLOORPLAN_DIR, EXPORT_DIR):
     _d.mkdir(parents=True, exist_ok=True)

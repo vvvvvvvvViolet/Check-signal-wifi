@@ -9,7 +9,6 @@ from __future__ import annotations
 import logging
 import os
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from . import __version__
 from .api import dashboard, diagnosis, heatmap, history, monitor, nettest, report, scanner
 from .api import settings as settings_api
-from .config import BASE_DIR
+from .config import FRONTEND_DIST
 from .db import init_db
 from .services.monitor import engine
 from .wifi import get_adapter
@@ -30,7 +29,6 @@ logging.basicConfig(
 )
 log = logging.getLogger("check-signal-wifi")
 
-FRONTEND_DIST = Path(os.environ.get("CSW_FRONTEND_DIST", BASE_DIR / "frontend" / "dist"))
 
 
 @asynccontextmanager
