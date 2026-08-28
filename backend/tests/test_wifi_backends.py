@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from unittest import mock
+
 import pytest
+from backend.app.wifi import windows as windows_module
 from backend.app.wifi.base import (
     band_for_channel,
     band_for_frequency,
@@ -133,6 +136,112 @@ SSID 2 : Guest-WiFi
     assert networks[0].rssi == rssi_from_quality(90)
     assert networks[2].ssid == "Guest-WiFi"
     assert networks[2].band == "2.4 GHz"
+
+
+ENGLISH_INTERFACE_OUTPUT = """Name                   : Wi-Fi
+Description            : Intel(R) Wireless-AC 9560 160MHz
+GUID                   : 0450e575-1233-4567-89ab-cdef01234567
+Physical address       : 3c:52:82:11:22:33
+State                  : connected
+SSID                   : Factory-WiFi
+BSSID                  : aa:bb:cc:dd:ee:01
+Network type           : Infrastructure
+Radio type             : 802.11ac
+Authentication         : WPA2-Personal
+Cipher                 : CCMP
+Channel                : 44
+Receive rate (Mbps)    : 866.7
+Transmit rate (Mbps)   : 866.7
+Signal                 : 78%
+Profile                : Factory-WiFi
+"""
+
+# "State" is a plain English word and gets translated on a non-English
+# Windows install; "SSID"/"BSSID" are protocol terms Windows generally leaves
+# untranslated. This is the shape that produced the reported bug: Diagnosis
+# read "Not connected to any WiFi network" while ping succeeded, because the
+# code returned before ever trying to read SSID/BSSID.
+LOCALISED_STATE_ONLY_OUTPUT = """Name                   : Wi-Fi
+Description            : Intel(R) Wireless-AC 9560 160MHz
+GUID                   : 0450e575-1233-4567-89ab-cdef01234567
+Physical address       : 3c:52:82:11:22:33
+สถานะ                  : เชื่อมต่อ
+SSID                   : Factory-WiFi
+BSSID                  : aa:bb:cc:dd:ee:01
+ประเภทเครือข่าย         : โครงสร้างพื้นฐาน
+การรับรองความถูกต้อง     : WPA2-Personal
+ช่องสัญญาณ              : 44
+สัญญาณ                 : 78%
+"""
+
+# Worst case: every label is translated, including SSID and BSSID. Only the
+# MAC-address shape (for BSSID, distinguished from Physical address by being
+# the *second* MAC found) and the bare percentage (for Signal) still parse.
+FULLY_LOCALISED_OUTPUT = """ชื่อ                    : Wi-Fi
+คำอธิบาย                : Intel(R) Wireless-AC 9560 160MHz
+GUID                    : 0450e575-1233-4567-89ab-cdef01234567
+ที่อยู่ทางกายภาพ           : 3c:52:82:11:22:33
+สถานะ                   : เชื่อมต่อ
+รหัส SSID               : Factory-WiFi
+รหัส BSSID              : aa:bb:cc:dd:ee:01
+ประเภทเครือข่าย          : โครงสร้างพื้นฐาน
+การรับรองความถูกต้อง      : WPA2-Personal
+ช่องสัญญาณ               : 44
+สัญญาณ                  : 78%
+"""
+
+DISCONNECTED_OUTPUT = """Name                   : Wi-Fi
+Description            : Intel(R) Wireless-AC 9560 160MHz
+GUID                   : 0450e575-1233-4567-89ab-cdef01234567
+Physical address       : 3c:52:82:11:22:33
+สถานะ                  : ตัดการเชื่อมต่อ
+"""
+
+
+def _link_from(output: str) -> object:
+    with mock.patch.object(windows_module, "run_cmd", return_value=output):
+        return WindowsWifiAdapter().get_link()
+
+
+def test_get_link_parses_a_normal_english_windows_install():
+    link = _link_from(ENGLISH_INTERFACE_OUTPUT)
+    assert link.connected is True
+    assert link.ssid == "Factory-WiFi"
+    assert link.bssid == "AA:BB:CC:DD:EE:01"
+    assert link.channel == 44
+    assert link.quality_pct == 78
+    assert link.rssi == rssi_from_quality(78)
+
+
+def test_get_link_detects_connection_when_only_state_is_localised():
+    """The exact bug reported: SSID/BSSID parse fine, but the early return on
+    a mismatched 'State' field never let the code reach them."""
+    link = _link_from(LOCALISED_STATE_ONLY_OUTPUT)
+    assert link.connected is True
+    assert link.ssid == "Factory-WiFi"
+    assert link.bssid == "AA:BB:CC:DD:EE:01"
+    # Channel's own label ("ช่องสัญญาณ") is translated in this fixture, so it
+    # is not recovered - only SSID/BSSID/Signal survive, which is why the code
+    # warns rather than claiming full data.
+    assert link.channel is None
+    assert link.quality_pct == 78
+    assert any("non-English display language" in w for w in link.warnings)
+
+
+def test_get_link_falls_back_to_mac_shape_and_position_when_fully_localised():
+    link = _link_from(FULLY_LOCALISED_OUTPUT)
+    assert link.connected is True
+    assert link.bssid == "AA:BB:CC:DD:EE:01"
+    assert link.ssid == "Factory-WiFi"  # recovered by position, not by label
+    assert link.quality_pct == 78  # recovered by the bare "78%" shape
+
+
+def test_get_link_does_not_mistake_the_adapters_own_mac_for_a_bssid():
+    """Physical address is always present and MAC-shaped even when genuinely
+    disconnected; a lone match there must not read as an association."""
+    link = _link_from(DISCONNECTED_OUTPUT)
+    assert link.connected is False
+    assert link.bssid is None
 
 
 def test_mock_adapter_produces_a_usable_link():

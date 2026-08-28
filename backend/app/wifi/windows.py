@@ -56,22 +56,61 @@ class WindowsWifiAdapter(WifiAdapter):
             link.warnings.append("netsh returned no output; is the WLAN service running?")
             return link
 
-        state = (_field(out, "State") or "").lower()
         link.interface = _field(out, "Name")
-        link.connected = "connected" in state and "disconnected" not in state
+
+        # `netsh` prints every field label in the OS display language. "State"
+        # is a plain English word, so on a non-English Windows install it is
+        # translated and never reads as "connected" - the client then looks
+        # disconnected even while genuinely associated. "SSID" and "BSSID" are
+        # protocol terms that Windows generally leaves untranslated, so try
+        # them regardless of what the state check finds, and derive
+        # `connected` from whether a BSSID was actually found rather than
+        # trusting a status word whose language is not guaranteed.
+        ssid = _field(out, "SSID")
+        bssid_field = _field(out, "BSSID", "AP BSSID")
+        bssid = bssid_field.upper() if bssid_field else None
+
+        if bssid is None:
+            # Labels can be translated too. "Physical address" (the client's
+            # own NIC) has the same MAC shape as BSSID and is always present,
+            # connected or not, so a lone match there must not be mistaken for
+            # an association - BSSID is only printed when connected, and
+            # always appears after Physical address. Two matches is what
+            # proves a real BSSID was found; one is just the adapter's own MAC.
+            mac_matches = list(_MAC_RE.finditer(out))
+            if len(mac_matches) >= 2:
+                bssid = mac_matches[-1].group(1).upper()
+                if not ssid:
+                    ssid = self._ssid_before_bssid(out, mac_matches[-1].group(1))
+
+        state = (_field(out, "State") or "").lower()
+        state_says_connected = "connected" in state and "disconnected" not in state
+        link.connected = state_says_connected or bssid is not None
         if not link.connected:
             return link
 
-        link.ssid = _field(out, "SSID")
-        bssid = _field(out, "BSSID", "AP BSSID")
-        link.bssid = bssid.upper() if bssid else None
+        if not state_says_connected:
+            link.warnings.append(
+                "The 'State' field did not read as English 'connected' - this "
+                "Windows install may use a non-English display language, so "
+                "channel, band and rate may be missing"
+            )
+
+        link.ssid = ssid
+        link.bssid = bssid
         link.security = _field(out, "Authentication")
         link.channel = _int_field(out, "Channel")
 
         quality = _int_field(out, "Signal")
+        if quality is None:
+            # "Signal" may be translated too; a bare percentage is the one
+            # part of that line whose shape survives any language.
+            percent_match = re.search(r"(\d{1,3})\s*%", out)
+            quality = int(percent_match.group(1)) if percent_match else None
         link.quality_pct = quality
         link.rssi = rssi_from_quality(quality)
-        link.warnings.append("RSSI is derived from the Windows signal percentage")
+        if quality is not None:
+            link.warnings.append("RSSI is derived from the Windows signal percentage")
 
         band = _field(out, "Band", "Radio type")
         link.band = self._normalise_band(band) or band_for_channel(link.channel)
@@ -82,6 +121,20 @@ class WindowsWifiAdapter(WifiAdapter):
         if (rate := _field(out, "Receive rate (Mbps)", "Receive rate")):
             link.rx_rate_mbps = _safe_float(rate)
         return link
+
+    @staticmethod
+    def _ssid_before_bssid(out: str, bssid_value: str) -> str | None:
+        """Recover SSID by position on the rare install where its label is
+        also translated. SSID's line is always the one immediately before
+        BSSID's in every localisation of this output, so position stands in
+        for a label match that has nothing else to go on.
+        """
+        lines = out.splitlines()
+        idx = next((i for i, line in enumerate(lines) if bssid_value in line), None)
+        if idx is None or idx == 0 or ":" not in lines[idx - 1]:
+            return None
+        candidate = lines[idx - 1].split(":", 1)[1].strip()
+        return candidate or None
 
     @staticmethod
     def _normalise_band(raw: str | None) -> str | None:
