@@ -23,18 +23,40 @@ CHECK SIGNAL WIFI
 
 ## Quick start
 
+Needs Python 3.11+ and Node.js 20+ ([nodejs.org](https://nodejs.org) - if
+`npm` is not recognized, Node isn't installed yet, or you need to reopen your
+terminal after installing it).
+
+**macOS / Linux:**
+
 ```bash
-# 1. Backend
 python -m venv .venv
-source .venv/bin/activate            # Windows: .venv\Scripts\activate
+source .venv/bin/activate
 pip install -r backend/requirements.txt
 
-# 2. Frontend (built once, then served by the backend)
 cd frontend && npm install && npm run build && cd ..
 
-# 3. Run
 uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
 ```
+
+**Windows (Command Prompt):**
+
+```bat
+python -m venv .venv
+.venv\Scripts\activate.bat
+pip install -r backend\requirements.txt
+
+cd frontend
+npm install
+npm run build
+cd ..
+
+uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
+```
+
+(PowerShell: use `.venv\Scripts\Activate.ps1` instead of the `activate.bat`
+line.) `source` is a bash/macOS command and has no Windows equivalent - copying
+the macOS/Linux block into Command Prompt is the most common first error.
 
 Open <http://127.0.0.1:8000>. API docs are at `/docs`.
 
