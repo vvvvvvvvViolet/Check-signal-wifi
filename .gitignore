@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# App data
+data/*.db
+data/*.db-journal
+data/floorplans/*
+!data/floorplans/.gitkeep
+exports/
+
+# Env / editors
+.env
+.env.local
+.DS_Store
+.idea/
+.vscode/
