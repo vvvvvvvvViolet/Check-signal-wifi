@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { api } from '../api/client'
-import type { ConnectivityChain, PingResult } from '../api/types'
+import type { ConnectivityChain, PingResult, TraceResult } from '../api/types'
 import { Banner, Card, Field, Spinner } from '../components/ui'
 import { usePolling } from '../hooks/usePolling'
 import { ms, pct, text } from '../lib/format'
@@ -22,6 +22,11 @@ export function NetworkTestPage() {
   const [manualError, setManualError] = useState<string | null>(null)
   const [pinging, setPinging] = useState(false)
 
+  const [traceTarget, setTraceTarget] = useState('8.8.8.8')
+  const [trace, setTrace] = useState<TraceResult | null>(null)
+  const [traceError, setTraceError] = useState<string | null>(null)
+  const [tracing, setTracing] = useState(false)
+
   const runPing = async () => {
     setPinging(true)
     setManualError(null)
@@ -32,6 +37,22 @@ export function NetworkTestPage() {
       setManual(null)
     } finally {
       setPinging(false)
+    }
+  }
+
+  const runTrace = async () => {
+    setTracing(true)
+    setTraceError(null)
+    try {
+      // A trace can take a while when a hop along the way is silently
+      // dropping packets rather than replying with an error, so it is worth
+      // more patience than a single ping.
+      setTrace(await api.get<TraceResult>('/api/nettest/traceroute', { target: traceTarget }))
+    } catch (err) {
+      setTraceError(err instanceof Error ? err.message : String(err))
+      setTrace(null)
+    } finally {
+      setTracing(false)
     }
   }
 
@@ -151,6 +172,69 @@ export function NetworkTestPage() {
         {manual && (
           <div className="mt-4">
             <PingCard title={manual.target} result={manual} />
+          </div>
+        )}
+      </Card>
+
+      <Card title="Traceroute">
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="min-w-[16rem] flex-1">
+            <Field label="Target host or IP">
+              <input
+                className="input"
+                value={traceTarget}
+                onChange={(e) => setTraceTarget(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && void runTrace()}
+              />
+            </Field>
+          </div>
+          <button className="btn" onClick={() => void runTrace()} disabled={tracing || !traceTarget}>
+            {tracing ? 'Tracing…' : 'Trace'}
+          </button>
+        </div>
+
+        {traceError && (
+          <div className="mt-3">
+            <Banner kind="error">{traceError}</Banner>
+          </div>
+        )}
+
+        {trace && (
+          <div className="mt-4">
+            {!trace.available ? (
+              <Banner kind="warning">
+                {trace.note || 'traceroute is not available on this host'}
+              </Banner>
+            ) : trace.hops.length === 0 ? (
+              <p className="text-sm text-slate-500">No hops recorded.</p>
+            ) : (
+              <div className="table-wrap">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>Hop</th>
+                      <th>Address</th>
+                      <th>RTT</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {trace.hops.map((hop) => (
+                      <tr key={hop.hop}>
+                        <td className="tabular">{hop.hop}</td>
+                        <td className="font-mono text-xs">
+                          {hop.timeout ? (
+                            <span className="text-slate-500">* * * (no reply)</span>
+                          ) : (
+                            text(hop.address)
+                          )}
+                        </td>
+                        <td className="tabular">{hop.timeout ? '—' : ms(hop.rtt_ms)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
       </Card>

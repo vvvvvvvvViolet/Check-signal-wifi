@@ -93,7 +93,12 @@ async def list_samples(
 @router.get("/summary")
 async def summary(
     session_id: int | None = None,
-    minutes: int | None = Query(default=60, ge=1, le=60 * 24 * 30),
+    # No default time window: a session_id already scopes the query, and a
+    # session that ran longer than an hour ago must not have its stats
+    # silently computed over zero matching rows. Callers wanting "the last
+    # N minutes across everything" pass minutes explicitly - list_samples
+    # follows the same convention.
+    minutes: int | None = Query(default=None, ge=1, le=60 * 24 * 30),
     db: Session = Depends(get_session),
 ) -> dict:
     stmt = select(

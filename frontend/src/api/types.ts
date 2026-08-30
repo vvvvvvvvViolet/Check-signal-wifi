@@ -38,6 +38,20 @@ export interface PingResult {
   error: string | null
 }
 
+export interface TraceHop {
+  hop: number
+  address: string | null
+  rtt_ms: number | null
+  timeout: boolean
+}
+
+export interface TraceResult {
+  target: string
+  hops: TraceHop[]
+  available: boolean
+  note: string | null
+}
+
 export interface Assessment {
   ping_ms: number | null
   packet_loss_pct: number | null
@@ -319,6 +333,14 @@ export interface HistoryPage {
   total: number
   limit: number
   offset: number
+}
+
+export interface MonitorSummary {
+  samples: number
+  rssi: { avg: number | null; min: number | null; max: number | null }
+  ping_ms: { avg: number | null; max: number | null }
+  packet_loss_pct: number | null
+  verdicts: Record<string, number>
 }
 
 export interface HistoryFacets {

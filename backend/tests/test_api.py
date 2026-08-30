@@ -258,6 +258,39 @@ def test_monitor_start_collect_stop(client):
     assert client.delete(f"/api/monitor/sessions/{session_id}").status_code == 204
 
 
+def test_monitor_summary_covers_a_whole_old_session_by_default(client):
+    """A session_id already scopes the query, so the summary must not also
+    apply a hidden last-60-minutes window - that would silently return
+    near-empty stats for any session that ran more than an hour ago."""
+    from datetime import UTC, datetime, timedelta
+
+    from backend.app.db import SessionLocal
+    from backend.app.models import MonitorSession, Sample
+
+    with SessionLocal() as db:
+        old = datetime.now(UTC) - timedelta(days=2)
+        session = MonitorSession(name="old survey", started_at=old, ended_at=old)
+        db.add(session)
+        db.commit()
+        db.add_all(
+            [
+                Sample(session_id=session.id, ts=old, rssi=-60, verdict="PASS"),
+                Sample(
+                    session_id=session.id,
+                    ts=old + timedelta(seconds=5),
+                    rssi=-62,
+                    verdict="PASS",
+                ),
+            ]
+        )
+        db.commit()
+        session_id = session.id
+
+    summary = client.get("/api/monitor/summary", params={"session_id": session_id}).json()
+    assert summary["samples"] == 2
+    assert summary["rssi"]["avg"] == -61.0
+
+
 def test_monitor_websocket_backfills_then_streams(client):
     with client.websocket_connect("/api/monitor/ws") as ws:
         hello = ws.receive_json()
