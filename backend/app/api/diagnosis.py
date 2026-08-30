@@ -12,8 +12,10 @@ from sqlalchemy.orm import Session
 
 from ..db import get_session
 from ..models import RoamEvent
+from ..services import controller as controller_service
 from ..services import diagnosis as diagnosis_service
 from ..services import probe
+from ..services import snmp as snmp_service
 from ..services.settings_store import load_settings
 from ..wifi import get_adapter
 
@@ -66,6 +68,16 @@ async def run_diagnosis(
         for r in recent_roams
     ]
 
+    controller_check: dict | None = None
+    if settings.controller.enabled and settings.controller.host:
+        try:
+            clients = await controller_service.list_clients(settings.controller)
+            controller_check = controller_service.compare_client_to_controller(link, clients)
+        except snmp_service.SnmpError:
+            # An unreachable WLC must not take the whole Diagnosis screen down
+            # with it - the client-side findings below still stand on their own.
+            controller_check = None
+
     report = diagnosis_service.diagnose(
         settings,
         rssi=link.get("rssi"),
@@ -79,6 +91,7 @@ async def run_diagnosis(
         roam_count=len(roams),
         window_minutes=window_minutes,
         roams=roams,
+        controller_check=controller_check,
     )
     return {"ts": snapshot["ts"], "link": link, "summary": summary, **report}
 

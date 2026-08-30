@@ -194,3 +194,56 @@ def test_roams_with_missing_data_are_skipped_not_crashed(settings: AppSettings):
     )
     assert "STICKY_CLIENT" not in codes(report)
     assert "SLOW_ROAM" not in codes(report)
+
+
+# --------------------------------------------------------- controller check
+def test_controller_mismatch_is_flagged(settings: AppSettings):
+    report = diagnosis.diagnose(
+        settings,
+        rssi=-55,
+        ping_ms=4.0,
+        loss_pct=0.0,
+        controller_check={
+            "agrees": False,
+            "reason": "The controller has no client record on this AP.",
+            "client_bssid": "AA:BB:CC:DD:EE:01",
+            "controller_ap_mac": None,
+        },
+    )
+    assert "CONTROLLER_CLIENT_MISMATCH" in codes(report)
+
+
+def test_controller_agreement_is_not_a_finding(settings: AppSettings):
+    """Agreement is the healthy case - it should stay silent, not add noise."""
+    report = diagnosis.diagnose(
+        settings,
+        rssi=-55,
+        ping_ms=4.0,
+        loss_pct=0.0,
+        controller_check={
+            "agrees": True,
+            "reason": "ok",
+            "client_bssid": "x",
+            "controller_ap_mac": "x",
+        },
+    )
+    assert "CONTROLLER_CLIENT_MISMATCH" not in codes(report)
+
+
+def test_controller_check_unavailable_is_not_a_finding(settings: AppSettings):
+    """agrees=None means the check could not run (not connected, WLC
+    unreachable) - silence, not a manufactured finding, is correct here."""
+    report = diagnosis.diagnose(
+        settings,
+        rssi=-55,
+        ping_ms=4.0,
+        loss_pct=0.0,
+        controller_check={"agrees": None, "reason": "not connected"},
+    )
+    assert "CONTROLLER_CLIENT_MISMATCH" not in codes(report)
+
+
+def test_no_controller_check_at_all_is_not_a_finding(settings: AppSettings):
+    """The common case: no WLC configured. Must not appear as if it failed."""
+    report = diagnosis.diagnose(settings, rssi=-55, ping_ms=4.0, loss_pct=0.0)
+    assert "CONTROLLER_CLIENT_MISMATCH" not in codes(report)

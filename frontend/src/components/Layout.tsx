@@ -19,6 +19,7 @@ const NAV = [
   { to: '/roaming', label: 'Roaming Test', icon: '🔄' },
   { to: '/heatmap', label: 'Heatmap', icon: '🗺️' },
   { to: '/network-test', label: 'Network Test', icon: '🧪' },
+  { to: '/controller', label: 'WLAN Controller', icon: '🏢' },
   { to: '/diagnosis', label: 'Diagnosis', icon: '🚨' },
   { to: '/history', label: 'History', icon: '📊' },
   { to: '/report', label: 'Report', icon: '📄' },

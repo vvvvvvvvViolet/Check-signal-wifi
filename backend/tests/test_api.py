@@ -487,3 +487,78 @@ def test_imported_points_can_carry_their_own_neighbour_list(client):
     assert grid["scanned_points"] == 1
     # Only the -62 dBm neighbour is usable; the -88 one is not somewhere to roam.
     assert grid["summary"]["max"] == 1
+
+
+# ---------------------------------------------------------- WLAN controller
+def _enable_controller(client, **overrides):
+    settings = client.get("/api/settings").json()["settings"]
+    settings["controller"] = {
+        "enabled": True,
+        "host": "127.0.0.1",
+        "port": 16161,
+        "version": "v2c",
+        "community": "public",
+        "v3_user": "",
+        "v3_auth_password": "",
+        "v3_priv_password": "",
+        "timeout_sec": 2,
+        **overrides,
+    }
+    response = client.put("/api/settings", json=settings)
+    assert response.status_code == 200
+
+
+def _disable_controller(client):
+    settings = client.get("/api/settings").json()["settings"]
+    settings["controller"] = {**settings["controller"], "enabled": False}
+    client.put("/api/settings", json=settings)
+
+
+def test_controller_endpoints_are_disabled_by_default(client):
+    _disable_controller(client)
+    for path in ("/status", "/aps", "/clients", "/self-check"):
+        assert client.get(f"/api/controller{path}").status_code == 503
+    assert client.get("/api/controller/raw", params={"oid": "1.3.6.1.2.1.1"}).status_code == 503
+
+
+def test_controller_settings_round_trip(client):
+    _enable_controller(client, host="10.20.30.40", community="secret")
+    settings = client.get("/api/settings").json()["settings"]
+    assert settings["controller"]["enabled"] is True
+    assert settings["controller"]["host"] == "10.20.30.40"
+    _disable_controller(client)
+
+
+def test_controller_status_reports_an_unreachable_host_as_a_clean_error(client):
+    """Nothing listens on this port, so the failure must come back as a
+    normal JSON error rather than a 500 or a hung request."""
+    _enable_controller(client, host="127.0.0.1", port=1, timeout_sec=1)
+    response = client.get("/api/controller/status")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["reachable"] is False
+    assert body["error"]
+    _disable_controller(client)
+
+
+def test_controller_aps_returns_502_when_the_device_is_unreachable(client):
+    _enable_controller(client, host="127.0.0.1", port=1, timeout_sec=1)
+    response = client.get("/api/controller/aps")
+    assert response.status_code == 502
+    _disable_controller(client)
+
+
+def test_controller_settings_reject_a_bad_snmp_version(client):
+    settings = client.get("/api/settings").json()["settings"]
+    settings["controller"] = {**settings["controller"], "version": "v1"}
+    assert client.put("/api/settings", json=settings).status_code == 422
+
+
+def test_diagnosis_degrades_gracefully_when_the_controller_is_unreachable(client):
+    """An unreachable WLC must not take the whole Diagnosis screen down with
+    it - the client-side findings still have to come back."""
+    _enable_controller(client, host="127.0.0.1", port=1, timeout_sec=1)
+    response = client.get("/api/diagnosis")
+    assert response.status_code == 200
+    assert "findings" in response.json()
+    _disable_controller(client)

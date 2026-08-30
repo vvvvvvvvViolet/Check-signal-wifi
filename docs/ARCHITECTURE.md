@@ -217,6 +217,43 @@ This is deliberately the smallest thing that works, and it only handles *added*
 columns. A real migration tool is warranted as soon as the schema starts
 changing shape rather than just growing.
 
+### The WLAN controller check has a different trust boundary
+
+Everything else in this app reads only the machine it runs on. Talking to a
+Cisco WLC over SNMP is a different kind of thing entirely: it reaches out to
+enterprise infrastructure, needs a credential (the SNMP community string, or
+v3 auth), and answers a question no client-side reading can - not "is there
+signal", but "does the network's own record of this client agree with what
+the client believes". That is why it lives behind its own opt-in toggle
+rather than running by default like everything else.
+
+`services/snmp.py` is a thin, generic GET/WALK client with no Cisco knowledge
+at all; `services/controller.py` is where the AireOS-specific table layout
+lives. That split exists because one lesson from the netsh work earlier in
+this project generalises directly here: a vendor's *label* is not something to
+trust blind. `netsh`'s field names are locale-dependent; a WLC's raw
+`OctetString` values are binary-or-text depending on the column, and naively
+calling `str()` on a MAC address produces unprintable garbage rather than an
+error - both are the same shape of bug, caught the same way (by testing
+against a real device rather than assuming a value's shape). The
+`AIRESPACE-WIRELESS-MIB` column numbers in `controller.py` were written from
+Cisco's public documentation, not confirmed against a live WLC 3504, and the
+module says so in its own docstring; `raw_walk()` and the `/api/controller/raw`
+endpoint exist specifically to verify or correct them against real hardware,
+the same role the "paste your netsh output" request played for Windows.
+
+Two design choices worth calling out specifically:
+
+* **A missing table is not an error.** A generic SNMP agent (or a WLC whose
+  MIB differs from what is assumed) simply returns nothing for
+  `bsnAPTable`, and `list_access_points` reports zero APs rather than raising
+  - which is indistinguishable, from the caller's side, from "this table
+  really is empty." The raw walk is what tells them apart.
+* **The controller cannot take Diagnosis down with it.** `/api/diagnosis`
+  wraps the WLC self-check in the same `try/except SnmpError` pattern used
+  everywhere a probe might fail, so a WLC that is slow or unreachable still
+  leaves every client-side finding intact.
+
 ### The monitor engine is a singleton
 
 There is one radio. Two sampling loops would halve the effective interval and
@@ -248,10 +285,13 @@ one.
 
 ## Testing
 
-134 tests, all against the simulated backend so they need no hardware. CI runs
-them on every push, along with a smoke test that starts the server, seeds a
-survey and downloads every export format - and a separate workflow that builds
-the desktop executable for all three platforms and smoke-tests each one.
+175 tests, all against the simulated backend so they need no hardware (the
+SNMP tests mock pysnmp's own coroutines; the real wire behaviour was verified
+by hand against a local `snmpd` while building them, not by the suite). CI
+runs them on every push, along with a smoke test that starts the server, seeds
+a survey and downloads every export format - and a separate workflow that
+builds the desktop executable for all three platforms and smoke-tests each
+one.
 
 | File | Covers |
 |---|---|
@@ -265,6 +305,8 @@ the desktop executable for all three platforms and smoke-tests each one.
 | `test_api.py` | The HTTP surface end to end, including the monitor lifecycle, walk capture and the redundancy map |
 | `test_retention.py` | What gets pruned, what never does, and the column migration |
 | `test_launcher.py` | Port selection, duplicate-launch detection, and that a frozen build keeps data out of the disposable bundle directory |
+| `test_snmp.py` | GET/WALK control flow, the three no-value markers, and the binary-vs-text MAC decoding |
+| `test_controller.py` | Table grouping, MAC index decoding, and the client/controller comparison |
 
 ## Known limits
 
@@ -282,3 +324,10 @@ the desktop executable for all three platforms and smoke-tests each one.
   metric — a real feature, not a tweak.
 - **Walk capture assumes a straight line at a steady pace.** There is no
   positioning system in the loop to correct it.
+- **The WLC integration is Cisco AireOS-specific and unverified against real
+  hardware.** It targets one MIB (`AIRESPACE-WIRELESS-MIB`) written from
+  documentation rather than confirmed against a live WLC 3504; other
+  controllers (Aruba, Meraki, UniFi, Omada) use entirely different
+  APIs/MIBs and are not supported. Use the raw OID walk to verify or correct
+  the column numbers against real hardware before trusting the AP/client
+  lists.

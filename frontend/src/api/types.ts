@@ -346,6 +346,18 @@ export interface Thresholds {
   roam_gap_warning_ms: number
 }
 
+export interface ControllerSettings {
+  enabled: boolean
+  host: string
+  port: number
+  version: 'v2c' | 'v3'
+  community: string
+  v3_user: string
+  v3_auth_password: string
+  v3_priv_password: string
+  timeout_sec: number
+}
+
 export interface AppSettings {
   bands: SignalBands
   thresholds: Thresholds
@@ -357,7 +369,61 @@ export interface AppSettings {
     retention_days: number
     survey_ping_count: number
   }
+  controller: ControllerSettings
   site_name: string
+}
+
+// ------------------------------------------------------------ controller
+export interface ControllerStatus {
+  reachable: boolean
+  error: string | null
+  sys_descr?: string | null
+  sys_name?: string | null
+  uptime_sec?: number | null
+}
+
+export interface RadioInfo {
+  radio_index: string
+  channel: number | null
+  operation_status: string | null
+  tx_power_level: number | null
+  client_count: number | null
+  channel_utilization_pct: number | null
+}
+
+export interface ControllerAp {
+  index: string
+  name: string | null
+  ip_address: string | null
+  mac_address: string | null
+  model: string | null
+  location: string | null
+  operation_status: string | null
+  radios: RadioInfo[]
+}
+
+export interface ControllerClient {
+  mac_address: string
+  ap_mac: string | null
+  ssid: string | null
+  rssi: number | null
+  snr: number | null
+  status: string | null
+}
+
+export interface ControllerSelfCheck {
+  agrees: boolean | null
+  reason: string
+  client_bssid: string | null
+  controller_ap_mac: string | null
+  controller_rssi?: number | null
+  controller_ssid?: string | null
+}
+
+export interface ControllerRawResult {
+  oid: string
+  count: number
+  rows: { oid: string; value: string | number | null }[]
 }
 
 export interface SettingsResponse {

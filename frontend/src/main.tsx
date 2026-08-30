@@ -24,6 +24,9 @@ const HeatmapPage = lazy(() =>
 const NetworkTestPage = lazy(() =>
   import('./pages/NetworkTest').then((m) => ({ default: m.NetworkTestPage })),
 )
+const ControllerPage = lazy(() =>
+  import('./pages/Controller').then((m) => ({ default: m.ControllerPage })),
+)
 const DiagnosisPage = lazy(() =>
   import('./pages/Diagnosis').then((m) => ({ default: m.DiagnosisPage })),
 )
@@ -64,6 +67,7 @@ const router = createBrowserRouter([
       { path: 'roaming', element: lazyRoute(RoamingPage) },
       { path: 'heatmap', element: lazyRoute(HeatmapPage) },
       { path: 'network-test', element: lazyRoute(NetworkTestPage) },
+      { path: 'controller', element: lazyRoute(ControllerPage) },
       { path: 'diagnosis', element: lazyRoute(DiagnosisPage) },
       { path: 'history', element: lazyRoute(HistoryPage) },
       { path: 'report', element: lazyRoute(ReportPage) },

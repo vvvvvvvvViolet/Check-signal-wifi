@@ -16,7 +16,17 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__
-from .api import dashboard, diagnosis, heatmap, history, monitor, nettest, report, scanner
+from .api import (
+    controller,
+    dashboard,
+    diagnosis,
+    heatmap,
+    history,
+    monitor,
+    nettest,
+    report,
+    scanner,
+)
 from .api import settings as settings_api
 from .config import FRONTEND_DIST
 from .db import init_db
@@ -78,6 +88,7 @@ for module in (
     history,
     report,
     settings_api,
+    controller,
 ):
     app.include_router(module.router)
 

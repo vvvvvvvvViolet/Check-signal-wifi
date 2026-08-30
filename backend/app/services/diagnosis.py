@@ -61,6 +61,7 @@ def diagnose(
     roam_count: int | None = None,
     window_minutes: int | None = None,
     roams: list[dict] | None = None,
+    controller_check: dict | None = None,
 ) -> dict:
     """Return findings ordered worst-first, plus a one-line headline."""
     th = settings.thresholds
@@ -204,6 +205,7 @@ def diagnose(
     findings.extend(_rf_environment_findings(scan or [], channel, band, rssi))
 
     findings.extend(_roaming_findings(settings, roams or []))
+    findings.extend(_controller_findings(controller_check))
 
     if roam_count is not None and window_minutes and roam_count >= 4:
         findings.append(
@@ -336,6 +338,43 @@ def _roaming_findings(settings: AppSettings, roams: list[dict]) -> list[Finding]
         )
 
     return findings
+
+
+def _controller_findings(controller_check: dict | None) -> list[Finding]:
+    """The one finding that needs the WLC's own view, not just the client's.
+
+    ``controller_check`` is whatever ``api/controller.py``'s self-check
+    comparison returned: ``agrees`` is ``True``/``False``/``None`` (the
+    ``None`` case - not connected, or the check could not run - contributes
+    nothing here, since silence beats a manufactured finding).
+    """
+    if not controller_check or controller_check.get("agrees") is not False:
+        return []
+    return [
+        Finding(
+            code="CONTROLLER_CLIENT_MISMATCH",
+            severity=WARNING,
+            title="Controller disagrees with the client's own association",
+            summary=(
+                controller_check.get("reason")
+                or "The WLC has no client record matching this machine on the AP it reports."
+            ),
+            causes=[
+                "Stale client association the AP has already dropped",
+                "The client roamed and the controller has not caught up yet",
+                "A second radio/interface on this machine is using a different MAC",
+            ],
+            recommendations=[
+                "Toggle WiFi off and on to force a fresh association",
+                "Re-run this check after a few seconds - controller state can lag briefly",
+                "If it persists, check the AP's client table directly on the controller",
+            ],
+            evidence={
+                "client_bssid": controller_check.get("client_bssid"),
+                "controller_ap_mac": controller_check.get("controller_ap_mac"),
+            },
+        )
+    ]
 
 
 def _rf_environment_findings(

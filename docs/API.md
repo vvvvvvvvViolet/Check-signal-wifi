@@ -105,6 +105,26 @@ carries `blind_spots` — locations with no usable alternative AP.
 Each chain step carries `state`: `ok`, `failed`, or `blocked` (it failed and
 something upstream failed first). A step that passed is always `ok`.
 
+## WLAN Controller
+
+Off by default (returns `503` until configured and enabled in Settings). Talks
+to a Cisco AireOS WLC over SNMP - see the README section on this feature and
+the `ACCURACY NOTE` in `services/controller.py` before trusting the AP/client
+tables against hardware this project has not verified.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/controller/status` | Standard MIB-II reachability check (sysDescr, sysName, uptime) |
+| GET | `/api/controller/aps` | Every AP the controller manages, with each radio's channel/load |
+| GET | `/api/controller/clients` | Every client currently associated, across every AP |
+| GET | `/api/controller/self-check` | Does the controller agree this machine is on the AP its own radio reports? |
+| GET | `/api/controller/raw` | Verification tool: raw-walk any OID subtree (`?oid=...`), unmapped |
+
+`/self-check` returns `agrees: true/false/null` - `null` means the check could
+not run (not connected, or the WLC was unreachable), which is folded into
+Diagnosis as silence rather than a manufactured finding; `false` becomes the
+`CONTROLLER_CLIENT_MISMATCH` finding on `GET /api/diagnosis`.
+
 ## Diagnosis
 
 | Method | Path | Purpose |
@@ -118,7 +138,11 @@ Findings carry `code`, `severity` (`info`/`warning`/`critical`), `title`,
 Codes: `NOT_ASSOCIATED`, `WEAK_COVERAGE`, `UPSTREAM_DEGRADED`,
 `RETRANSMISSION`, `HIGH_JITTER`, `CO_CHANNEL_CONTENTION`,
 `NON_STANDARD_24_CHANNEL`, `EXCESSIVE_ROAMING`, `STICKY_CLIENT`, `SLOW_ROAM`,
-`HEALTHY`.
+`CONTROLLER_CLIENT_MISMATCH`, `HEALTHY`.
+
+`GET /api/diagnosis` also runs the WLC self-check when the controller is
+enabled, folding a mismatch in as a finding; an unreachable controller is
+swallowed rather than failing the whole request.
 
 `GET /api/diagnosis` reads the recent roam events, not just their count:
 `STICKY_CLIENT` needs to know how *late* each hand-off was, which only

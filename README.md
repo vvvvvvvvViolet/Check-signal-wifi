@@ -13,6 +13,7 @@ CHECK SIGNAL WIFI
 ├── 🔄 Roaming Test     Every AP hand-off, timestamped
 ├── 🗺️ Heatmap          Coverage and roaming-redundancy maps on your plan
 ├── 🧪 Network Test     WiFi → Gateway → LAN → DNS → Internet
+├── 🏢 WLAN Controller  Cross-check the client against a Cisco WLC over SNMP
 ├── 🚨 Diagnosis        Which layer is actually at fault
 ├── 📊 History          Saved spot-checks, filterable
 ├── 📄 Report           Excel / CSV / PDF export
@@ -96,7 +97,7 @@ cd frontend && npm run dev                          # terminal 2 → :5173
 ```
 
 ```bash
-cd backend && pytest          # 121 tests
+cd backend && pytest          # 175 tests
 cd backend && ruff check .
 cd frontend && npm run lint   # tsc --noEmit
 ```
@@ -133,6 +134,41 @@ authentication — **do not expose it to a shared network** without putting a
 reverse proxy and auth in front.
 
 ---
+
+## WLAN Controller (optional)
+
+Off by default — this is the one screen that reaches out to enterprise
+infrastructure over the network rather than reading only the machine the app
+runs on, so it needs a deliberate opt-in.
+
+Point it at a Cisco AireOS WLC (tested against WLC 3504) over SNMP and it will:
+
+* confirm the controller answers at all (standard MIB-II — no vendor guesswork)
+* list every AP it manages, with each radio's channel, client count and
+  utilisation
+* list every client the controller currently holds, across every AP
+* **cross-check this machine**: does the controller's client table agree that
+  this laptop is on the AP its own radio reports? A mismatch means the client
+  is holding a stale association the AP has already dropped — invisible to
+  either side alone, and folded into Diagnosis as `CONTROLLER_CLIENT_MISMATCH`
+  when it happens.
+
+Configure the WLC's host and SNMP community string (v2c) or v3 credentials
+under **WLAN Controller** in the app, and enable monitoring.
+
+**A candid limit:** the AP/client table layout (Cisco's
+`AIRESPACE-WIRELESS-MIB`) was implemented from public documentation, not
+verified against a live WLC 3504 — this project has never had one to test
+against. If the AP or client list comes back empty on a WLC that genuinely has
+either, use the **raw OID walk** on the same screen: point it at
+`1.3.6.1.4.1.14179.2.2.1.1` (APs) or `1.3.6.1.4.1.14179.2.1.4.1` (clients) and
+compare the column numbers against the WLC's own CLI (`show ap summary`) or
+web UI. That is exactly the tool that resolved the Windows locale bug earlier
+in this project, aimed at a new kind of "translated labels."
+
+**Security note:** SNMPv2c's community string travels in cleartext on the
+wire. Safe on a dedicated management VLAN; not safe across an open WiFi survey
+network. Use SNMPv3 if your network team can provide it.
 
 ## Reading the numbers
 
@@ -273,6 +309,8 @@ backend/app/
     ├── diagnosis.py   The rule engine
     ├── heatmap.py     IDW interpolation and redundancy counting
     ├── retention.py   Pruning telemetry (and nothing else)
+    ├── snmp.py        Generic, timeout-safe SNMP GET/WALK
+    ├── controller.py  Cisco WLC AP/client tables over SNMP
     └── report.py      CSV / Excel / PDF writers
 frontend/src/
 ├── pages/             One file per screen

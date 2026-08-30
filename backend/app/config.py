@@ -121,6 +121,28 @@ class MonitorConfig(BaseModel):
     survey_ping_count: int = Field(default=2, ge=1, le=20)
 
 
+class ControllerConfig(BaseModel):
+    """How to reach the site's WLAN controller over SNMP.
+
+    Optional and off by default: most sites do not have one, and reading it
+    means the app reaches out to enterprise infrastructure rather than only
+    the machine it runs on - a different trust boundary from everything else
+    here, so it stays opt-in.
+    """
+
+    enabled: bool = False
+    host: str = ""
+    port: int = Field(default=161, ge=1, le=65535)
+    version: str = Field(default="v2c", pattern="^(v2c|v3)$")
+    # SNMPv2c's community string travels in cleartext on the wire - acceptable
+    # on a dedicated management VLAN, not across an open WiFi survey network.
+    community: str = ""
+    v3_user: str = ""
+    v3_auth_password: str = ""
+    v3_priv_password: str = ""
+    timeout_sec: float = Field(default=4.0, ge=0.5, le=30)
+
+
 class AppSettings(BaseModel):
     """The whole user-editable configuration, persisted as one JSON blob."""
 
@@ -128,6 +150,7 @@ class AppSettings(BaseModel):
     thresholds: Thresholds = Field(default_factory=Thresholds)
     ping: PingTargets = Field(default_factory=PingTargets)
     monitor: MonitorConfig = Field(default_factory=MonitorConfig)
+    controller: ControllerConfig = Field(default_factory=ControllerConfig)
     site_name: str = "Default Site"
 
 

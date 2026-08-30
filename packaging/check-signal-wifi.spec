@@ -42,6 +42,10 @@ hiddenimports = [
     "sqlalchemy.dialects.sqlite",
 ]
 hiddenimports += collect_submodules("backend.app.wifi")
+# pysnmp's SMI/transport layers do their own dynamic lookups internally;
+# collecting the whole package is cheap next to debugging a missing-module
+# error that only shows up when someone actually enables controller polling.
+hiddenimports += collect_submodules("pysnmp")
 
 a = Analysis(  # noqa: F821
     [str(ROOT / "launcher.py")],
