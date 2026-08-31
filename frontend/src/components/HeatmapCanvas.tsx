@@ -101,6 +101,7 @@ export function HeatmapCanvas({
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const imageRef = useRef<HTMLImageElement | null>(null)
+  const drawnWidthRef = useRef(0)
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -110,17 +111,41 @@ export function HeatmapCanvas({
 
     const { plan, grid, points, access_points: aps, metric } = data
     const minRssi = data.redundancy_min_rssi ?? -70
-    canvas.width = plan.width_px
-    canvas.height = plan.height_px
 
     const draw = () => {
-      ctx.clearRect(0, 0, canvas.width, canvas.height)
+      // Render at the size the canvas is actually displayed at, not at the
+      // plan's own pixel size. Sizing the backing store from the image meant
+      // every marker had to be scaled back by however much CSS had resized the
+      // plan - and a plan narrower than that assumed width got no scaling at
+      // all, so its dots came out as big as the fixture they were marking.
+      // Working in display pixels makes a marker the same size on screen
+      // whatever resolution the uploaded plan happens to be, and keeps a
+      // phone-camera plan from allocating a canvas of its own megapixel count.
+      const cssWidth = canvas.clientWidth || plan.width_px
+      const dpr = window.devicePixelRatio || 1
+      const width = Math.max(1, Math.round(cssWidth * dpr))
+      const height = Math.max(1, Math.round(cssWidth * (plan.height_px / plan.width_px) * dpr))
+      if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width
+        canvas.height = height
+      }
+      drawnWidthRef.current = cssWidth
+
+      // Plan pixels -> backing-store pixels, for placing anything the backend
+      // gave us in plan coordinates.
+      const k = width / plan.width_px
+      // One CSS pixel, in backing-store pixels. Marker dimensions below are
+      // written in CSS pixels and multiplied by this, so they stay a fixed
+      // on-screen size and stay sharp on a retina display.
+      const scale = dpr
+
+      ctx.clearRect(0, 0, width, height)
 
       if (imageRef.current?.complete && imageRef.current.naturalWidth > 0) {
-        ctx.drawImage(imageRef.current, 0, 0, canvas.width, canvas.height)
+        ctx.drawImage(imageRef.current, 0, 0, width, height)
       } else {
         ctx.fillStyle = '#0f172a'
-        ctx.fillRect(0, 0, canvas.width, canvas.height)
+        ctx.fillRect(0, 0, width, height)
       }
 
       if (grid) {
@@ -151,15 +176,15 @@ export function HeatmapCanvas({
           ctx.globalAlpha = opacity
           ctx.imageSmoothingEnabled = true
           ctx.imageSmoothingQuality = 'high'
-          ctx.drawImage(offscreen, 0, 0, canvas.width, canvas.height)
+          ctx.drawImage(offscreen, 0, 0, width, height)
           ctx.restore()
         }
       }
 
-      const scale = Math.max(1, canvas.width / 900)
-
       if (showPoints) {
         for (const point of points) {
+          const x = point.x * k
+          const y = point.y * k
           const usable = countUsable(point.neighbors, minRssi)
           // A point captured without a scan has no redundancy answer. Colouring
           // it red would read as "blind spot" when the truth is "not measured",
@@ -171,10 +196,10 @@ export function HeatmapCanvas({
                 : `rgb(${colorFor(usable, metric).join(',')})`
               : GRADE_COLOR[point.grade ?? 'UNKNOWN']
           ctx.beginPath()
-          ctx.arc(point.x, point.y, 6 * scale, 0, Math.PI * 2)
+          ctx.arc(x, y, 5 * scale, 0, Math.PI * 2)
           ctx.fillStyle = color
           ctx.fill()
-          ctx.lineWidth = 2 * scale
+          ctx.lineWidth = 1.5 * scale
           ctx.strokeStyle = '#0f172a'
           ctx.stroke()
 
@@ -189,60 +214,64 @@ export function HeatmapCanvas({
                 ? String(point.rssi)
                 : null
           if (caption !== null) {
-            ctx.font = `${11 * scale}px ui-monospace, monospace`
+            ctx.font = `${10 * scale}px ui-monospace, monospace`
             ctx.fillStyle = '#e2e8f0'
             ctx.textAlign = 'center'
             ctx.strokeStyle = '#0f172a'
             ctx.lineWidth = 3 * scale
-            ctx.strokeText(caption, point.x, point.y - 10 * scale)
-            ctx.fillText(caption, point.x, point.y - 10 * scale)
+            ctx.strokeText(caption, x, y - 9 * scale)
+            ctx.fillText(caption, x, y - 9 * scale)
           }
         }
       }
 
       if (showAps) {
         for (const ap of aps) {
-          const size = 11 * scale
+          const x = ap.x * k
+          const y = ap.y * k
+          const size = 9 * scale
           ctx.beginPath()
-          ctx.moveTo(ap.x, ap.y - size)
-          ctx.lineTo(ap.x + size, ap.y)
-          ctx.lineTo(ap.x, ap.y + size)
-          ctx.lineTo(ap.x - size, ap.y)
+          ctx.moveTo(x, y - size)
+          ctx.lineTo(x + size, y)
+          ctx.lineTo(x, y + size)
+          ctx.lineTo(x - size, y)
           ctx.closePath()
           ctx.fillStyle = '#0ea5e9'
           ctx.fill()
-          ctx.lineWidth = 2 * scale
+          ctx.lineWidth = 1.5 * scale
           ctx.strokeStyle = '#e0f2fe'
           ctx.stroke()
 
-          ctx.font = `bold ${11 * scale}px ui-sans-serif, system-ui`
+          ctx.font = `bold ${10 * scale}px ui-sans-serif, system-ui`
           ctx.fillStyle = '#e0f2fe'
           ctx.textAlign = 'center'
           ctx.strokeStyle = '#0c4a6e'
           ctx.lineWidth = 3 * scale
-          ctx.strokeText(ap.name, ap.x, ap.y + size + 13 * scale)
-          ctx.fillText(ap.name, ap.x, ap.y + size + 13 * scale)
+          ctx.strokeText(ap.name, x, y + size + 12 * scale)
+          ctx.fillText(ap.name, x, y + size + 12 * scale)
         }
       }
 
       for (const marker of markers ?? []) {
+        const x = marker.x * k
+        const y = marker.y * k
         ctx.beginPath()
-        ctx.arc(marker.x, marker.y, 9 * scale, 0, Math.PI * 2)
+        ctx.arc(x, y, 8 * scale, 0, Math.PI * 2)
         ctx.strokeStyle = '#38bdf8'
-        ctx.lineWidth = 3 * scale
+        ctx.lineWidth = 2 * scale
         ctx.stroke()
         ctx.beginPath()
-        ctx.arc(marker.x, marker.y, 3 * scale, 0, Math.PI * 2)
+        ctx.arc(x, y, 2.5 * scale, 0, Math.PI * 2)
         ctx.fillStyle = '#38bdf8'
         ctx.fill()
         if (marker.label) {
-          ctx.font = `bold ${11 * scale}px ui-sans-serif, system-ui`
+          ctx.font = `bold ${10 * scale}px ui-sans-serif, system-ui`
           ctx.textAlign = 'center'
           ctx.strokeStyle = '#0c4a6e'
           ctx.lineWidth = 3 * scale
-          ctx.strokeText(marker.label, marker.x, marker.y - 16 * scale)
+          ctx.strokeText(marker.label, x, y - 14 * scale)
           ctx.fillStyle = '#e0f2fe'
-          ctx.fillText(marker.label, marker.x, marker.y - 16 * scale)
+          ctx.fillText(marker.label, x, y - 14 * scale)
         }
       }
     }
@@ -256,15 +285,26 @@ export function HeatmapCanvas({
     } else {
       draw()
     }
+
+    // The drawing is now sized from the element, so a container that changes
+    // width - a window resize, the sidebar collapsing - has to redraw or the
+    // plan is left stretched. Only width matters: reacting to the height we
+    // just set ourselves would loop.
+    const observer = new ResizeObserver((entries) => {
+      const observed = entries[0]?.contentRect.width ?? 0
+      if (observed > 0 && Math.abs(observed - drawnWidthRef.current) >= 1) draw()
+    })
+    observer.observe(canvas)
+    return () => observer.disconnect()
   }, [data, imageUrl, opacity, showPoints, showAps, markers])
 
   const handleClick = (event: React.MouseEvent<HTMLCanvasElement>) => {
     if (!onPick) return
-    const canvas = event.currentTarget
-    const rect = canvas.getBoundingClientRect()
-    // Map the click from displayed size back to floor-plan pixel coordinates.
-    const x = ((event.clientX - rect.left) / rect.width) * canvas.width
-    const y = ((event.clientY - rect.top) / rect.height) * canvas.height
+    const rect = event.currentTarget.getBoundingClientRect()
+    // Map the click from displayed size back to floor-plan pixel coordinates,
+    // which is what every stored point and the backend's grid are in.
+    const x = ((event.clientX - rect.left) / rect.width) * data.plan.width_px
+    const y = ((event.clientY - rect.top) / rect.height) * data.plan.height_px
     onPick(Math.round(x), Math.round(y))
   }
 
