@@ -9,7 +9,8 @@ Two guards keep it from lying:
 
 * ``max_influence_px`` - cells with no measurement within this radius are left
   empty rather than extrapolated, so unsurveyed floor reads as "unknown", not
-  as "green".
+  as "green". Its default comes from how far apart the readings actually are,
+  not from the plan's pixel dimensions - see ``default_influence_px``.
 * ``power`` - higher values make each point more local. 2.0 is the usual
   default and matches how RSSI actually falls off over short distances.
 """
@@ -25,12 +26,78 @@ from .quality import GRADE_COLOR, grade_rssi
 DEFAULT_GRID = 48
 DEFAULT_POWER = 2.0
 
+# How far past the typical gap between readings one reading may speak for. The
+# furthest corner of a square of side s is only 0.71*s from a reading, so 1.5
+# comfortably bridges neighbouring points without joining readings that were
+# taken nowhere near each other.
+INFLUENCE_SPACING_FACTOR = 1.5
+# Fractions of the plan diagonal. A lone reading has no spacing to infer from,
+# so it claims a small neighbourhood rather than a share of the building; the
+# ceiling is what this default used to be for every survey.
+LONE_POINT_INFLUENCE = 0.06
+INFLUENCE_FLOOR = 0.03
+INFLUENCE_CEILING = 0.25
+# The nearest-neighbour search is O(probes * points); past this many points the
+# spacing is estimated from an evenly spaced sample of probes, measured against
+# every point, which a percentile is robust to anyway.
+SPACING_PROBE_LIMIT = 400
+
 
 @dataclass(slots=True)
 class Point:
     x: float
     y: float
     value: float
+
+
+def default_influence_px(points: list[Point], width_px: int, height_px: int) -> float:
+    """How far one reading may be trusted to speak for, in plan pixels.
+
+    Deriving this from the plan's own pixel size - as this once did, at a
+    quarter of the diagonal - ties the claim to the resolution of the uploaded
+    image: the same factory scanned at twice the resolution would have every
+    reading vouch for twice the distance, and a single point on a large CAD
+    export painted a third of the building at its own value.
+
+    The survey's own spacing is the honest source. Readings taken a couple of
+    metres apart justify filling the gap between them; readings taken from
+    opposite ends of the floor do not.
+    """
+    diagonal = math.hypot(width_px, height_px)
+    if len(points) < 2:
+        return LONE_POINT_INFLUENCE * diagonal
+
+    step = max(1, len(points) // SPACING_PROBE_LIMIT)
+    probes = points[::step][:SPACING_PROBE_LIMIT]
+
+    spacings: list[float] = []
+    for probe in probes:
+        nearest = min(
+            (
+                math.hypot(probe.x - other.x, probe.y - other.y)
+                for other in points
+                if other is not probe
+            ),
+            default=0.0,
+        )
+        # Two readings on the same spot say nothing about how far apart the
+        # survey was taken, so they do not get a vote.
+        if nearest > 0:
+            spacings.append(nearest)
+
+    if not spacings:
+        return LONE_POINT_INFLUENCE * diagonal
+
+    spacings.sort()
+    # The median, so a handful of readings taken unusually close together or
+    # unusually far apart does not set the scale for the whole survey. Higher
+    # percentiles were tried on uniform, clustered and walk-capture layouts and
+    # moved the result on none of them, so they were not worth the explaining.
+    spacing = spacings[len(spacings) // 2]
+    return max(
+        INFLUENCE_FLOOR * diagonal,
+        min(INFLUENCE_CEILING * diagonal, INFLUENCE_SPACING_FACTOR * spacing),
+    )
 
 
 def interpolate_grid(
@@ -57,9 +124,7 @@ def interpolate_grid(
     cell_h = height_px / rows
 
     if max_influence_px is None:
-        # Default: a quarter of the plan's diagonal - wide enough to bridge a
-        # normal survey spacing, tight enough to leave real gaps visible.
-        max_influence_px = 0.25 * math.hypot(width_px, height_px)
+        max_influence_px = default_influence_px(points, width_px, height_px)
 
     matrix: list[list[float | None]] = []
     for row in range(rows):

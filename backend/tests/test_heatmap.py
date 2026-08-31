@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 from backend.app.services.heatmap import (
     Point,
+    default_influence_px,
     grade_matrix,
     interpolate_grid,
     redundancy_at,
@@ -50,6 +51,68 @@ def test_grid_cells_stay_square_on_a_wide_plan():
 def test_zero_dimensions_are_rejected():
     with pytest.raises(ValueError):
         interpolate_grid([Point(0, 0, -50.0)], 0, 100)
+
+
+def test_influence_does_not_grow_with_the_plans_resolution():
+    """The same survey scanned at a higher resolution must not claim more floor.
+
+    The reach of a reading used to be a fraction of the plan diagonal, so
+    re-exporting the same drawing at twice the size doubled how far every
+    reading spoke for - and a lone point on a large CAD export painted a third
+    of the building at its own value.
+    """
+    # The same four readings, laid out on plans that differ only in scale.
+    small = [Point(100, 100, -55.0), Point(300, 100, -60.0), Point(100, 300, -58.0)]
+    large = [Point(p.x * 4, p.y * 4, p.value) for p in small]
+
+    small_reach = default_influence_px(small, 1000, 1000)
+    large_reach = default_influence_px(large, 4000, 4000)
+
+    # Reach scales with the survey, so as a share of the plan it is unchanged.
+    assert large_reach / 4000 == pytest.approx(small_reach / 1000, rel=1e-6)
+
+
+def test_a_lone_reading_claims_only_a_small_neighbourhood():
+    """One point is evidence about where the meter stood, not about the site."""
+    width = height = 4000
+    reach = default_influence_px([Point(200, 2000, -38.0)], width, height)
+    assert reach < 0.10 * width, "a single reading must not span the building"
+
+    grid = interpolate_grid([Point(200, 2000, -38.0)], width, height, grid_size=48)
+    # Most of an unsurveyed building has to stay unknown rather than read green.
+    assert grid["covered_pct"] < 10
+
+
+def test_reach_follows_how_far_apart_the_readings_actually_are():
+    tight = [Point(500 + i * 20, 500, -55.0) for i in range(6)]
+    spread = [Point(500 + i * 200, 500, -55.0) for i in range(6)]
+    assert default_influence_px(tight, 2000, 2000) < default_influence_px(spread, 2000, 2000)
+
+
+def test_a_proper_survey_leaves_no_holes_between_its_readings():
+    """Tightening the default must not punch holes in a normally spaced survey.
+
+    Floor beyond the surveyed rectangle is a different matter: that genuinely
+    was not measured, and is asserted to stay unknown here rather than being
+    filled in from the nearest reading several rooms away.
+    """
+    points = [Point(80 + i * 120, 80 + j * 120, -55.0) for i in range(8) for j in range(4)]
+    grid = interpolate_grid(points, 1100, 600, grid_size=48)
+    cell_w, cell_h = grid["cell_width_px"], grid["cell_height_px"]
+
+    def cell_at(x: float, y: float):
+        return grid["matrix"][int(y / cell_h)][int(x / cell_w)]
+
+    # Dead centre of four adjacent readings - the worst case for a gap.
+    assert cell_at(140, 140) == pytest.approx(-55.0)
+    # Well outside the surveyed rectangle, which stopped at x=920, y=440.
+    assert cell_at(1080, 580) is None
+
+
+def test_readings_stacked_on_one_spot_do_not_collapse_the_reach():
+    """Identical coordinates carry no spacing information, so they get no vote."""
+    stacked = [Point(500, 500, -55.0), Point(500, 500, -57.0)]
+    assert default_influence_px(stacked, 2000, 2000) > 0
 
 
 def test_summary_counts_by_grade():

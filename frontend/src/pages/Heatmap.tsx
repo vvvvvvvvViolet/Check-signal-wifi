@@ -34,6 +34,10 @@ export function HeatmapPage() {
 
   const [opacity, setOpacity] = useState(0.62)
   const [gridSize, setGridSize] = useState(56)
+  // How far one reading may speak for, as a percentage of the plan diagonal.
+  // null leaves it to the backend, which derives it from the survey's own
+  // spacing; a number here overrides that for someone who knows their site.
+  const [reachPct, setReachPct] = useState<number | null>(null)
   const [metric, setMetric] = useState<HeatmapMetric>('rssi')
   const [filters, setFilters] = useState<Filters>({ ssid: '', bssid: '', band: '' })
   const [mode, setMode] = useState<Mode>('measure')
@@ -62,6 +66,15 @@ export function HeatmapPage() {
     })
   }, [loadPlans])
 
+  const plan = plans.find((p) => p.id === planId) ?? null
+  const planDiagonal = plan ? Math.hypot(plan.width_px, plan.height_px) : 0
+  // Where the slider sits while it is on auto, so grabbing it carries on from
+  // the radius the backend chose rather than jumping to some default.
+  const autoReachPct =
+    coverage?.grid && planDiagonal > 0
+      ? Math.round((coverage.grid.max_influence_px / planDiagonal) * 100)
+      : 6
+
   const loadCoverage = useCallback(async () => {
     if (planId === null) {
       setCoverage(null)
@@ -75,13 +88,17 @@ export function HeatmapPage() {
           ssid: filters.ssid || undefined,
           bssid: filters.bssid || undefined,
           band: filters.band || undefined,
+          max_influence_px:
+            reachPct === null || planDiagonal === 0
+              ? undefined
+              : Math.round((reachPct / 100) * planDiagonal),
         }),
       )
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     }
-  }, [planId, gridSize, metric, filters])
+  }, [planId, gridSize, metric, filters, reachPct, planDiagonal])
 
   useEffect(() => {
     void loadCoverage()
@@ -404,6 +421,45 @@ export function HeatmapPage() {
                   className="w-full accent-sky-500"
                 />
               </Field>
+              {/* Not a <Field>: the reset control is a button, and Field wraps
+                  its children in a <label>, where a click would be stolen by
+                  the slider. */}
+              <div className="block">
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="label">
+                    Coverage radius — {reachPct === null ? 'auto' : `${reachPct}% of plan`}
+                    {coverage?.grid && (
+                      <span className="text-slate-600">
+                        {' '}
+                        ({Math.round(coverage.grid.max_influence_px)} px)
+                      </span>
+                    )}
+                  </span>
+                  {reachPct !== null && (
+                    <button
+                      type="button"
+                      className="text-xs text-sky-400 hover:text-sky-300"
+                      onClick={() => setReachPct(null)}
+                    >
+                      auto
+                    </button>
+                  )}
+                </div>
+                <input
+                  type="range"
+                  min={2}
+                  max={25}
+                  step={1}
+                  value={reachPct ?? autoReachPct}
+                  onChange={(e) => setReachPct(Number(e.target.value))}
+                  className="w-full accent-sky-500"
+                  aria-label="Coverage radius as a percentage of the plan"
+                />
+                <span className="mt-1 block text-xs text-slate-500">
+                  How far one reading is trusted to speak for. Auto follows how far apart your
+                  readings actually are.
+                </span>
+              </div>
             </div>
 
             {mode === 'measure' && (
