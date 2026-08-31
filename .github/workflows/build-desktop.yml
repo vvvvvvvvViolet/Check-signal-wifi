@@ -1,0 +1,133 @@
+name: Build desktop app
+
+# Produces the double-clickable executable. Windows is the target that matters
+# for the factory laptops; macOS and Linux builds come along for the ride
+# because the spec is the same and the runners are free.
+#
+# Download a build from the run's "Artifacts" section, or from a Release when
+# a version tag is pushed.
+
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: Windows
+            artifact: CheckSignalWiFi-Windows
+            binary: dist/CheckSignalWiFi.exe
+          - os: macos-latest
+            label: macOS
+            artifact: CheckSignalWiFi-macOS
+            binary: dist/CheckSignalWiFi
+          - os: ubuntu-latest
+            label: Linux
+            artifact: CheckSignalWiFi-Linux
+            binary: dist/CheckSignalWiFi
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt pyinstaller==6.22.2
+          npm --prefix frontend ci
+
+      - name: Build the UI
+        # The spec refuses to build without this, since an executable that
+        # serves no interface is worse than a failed build.
+        run: npm --prefix frontend run build
+
+      - name: Build the executable
+        run: pyinstaller packaging/check-signal-wifi.spec --noconfirm
+
+      - name: Smoke-test the executable
+        # Proves the bundle actually starts and serves - a build that only
+        # compiles tells you nothing about missing hidden imports, which is
+        # exactly how frozen apps fail.
+        shell: bash
+        env:
+          CSW_WIFI_BACKEND: mock
+        run: |
+          set -euo pipefail
+          "${{ matrix.binary }}" --port 8123 --no-browser &
+          APP_PID=$!
+
+          for _ in $(seq 40); do
+            if curl -sf http://127.0.0.1:8123/api/health > /dev/null; then break; fi
+            sleep 1
+          done
+
+          curl -sf http://127.0.0.1:8123/api/health | grep -q '"status"'
+          # The UI has to be inside the bundle, not merely built next to it.
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8123/)" = 200
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8123/heatmap)" = 200
+          # PDF export is the one path that needs ReportLab's bundled fonts.
+          curl -sf 'http://127.0.0.1:8123/api/report/history?format=pdf' -o smoke.pdf
+          head -c 4 smoke.pdf | grep -q '%PDF'
+
+          kill $APP_PID 2>/dev/null || true
+
+      - name: Package with a readme
+        shell: bash
+        run: |
+          mkdir -p release
+          cp "${{ matrix.binary }}" release/
+          cp packaging/README-desktop.txt release/README.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: release/
+          if-no-files-found: error
+          retention-days: 90
+
+  release:
+    name: Attach builds to the release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Zip each platform build
+        run: |
+          cd artifacts
+          for dir in */; do
+            (cd "$dir" && zip -r "../${dir%/}.zip" .)
+          done
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*.zip
+          generate_release_notes: true
